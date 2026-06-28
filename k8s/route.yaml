@@ -1,0 +1,42 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: chino-api
+  namespace: stube
+  labels:
+    app: chino-api
+    product: chino
+    value-stream: stube
+    role: backend
+    env: prod
+  annotations:
+    # /play streams produce content faster than realtime. Once the
+    # browser's internal buffer fills (~5-10 min of video), it stops
+    # reading from the connection; the server's send window blocks
+    # waiting for the browser to consume. HAProxy's default
+    # serverTimeout=30s sees that as inactivity and cuts the
+    # connection — which triggers our client-side recoverFault and
+    # reloads the stream with a brief glitch every 6-14 min during
+    # long-form playback. Bumping the inactivity timeout to 4 h
+    # comfortably covers any movie length so the connection persists
+    # naturally and ffmpeg is only restarted on quality switches,
+    # real decode errors, or playback ending.
+    haproxy.router.openshift.io/timeout: 4h
+spec:
+  host: chino.example
+  path: /api
+  to:
+    kind: Service
+    name: chino-api
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    # `Allow` — when an upstream load balancer handles TLS offload at
+    # the perimeter, plain HTTP arrives at the router; with Redirect
+    # we'd 302 back to HTTPS → the LB terminates → HTTP → loop. If your
+    # edge passes TLS through (SNI passthrough) instead, flip this back
+    # to Redirect.
+    insecureEdgeTerminationPolicy: Allow
+  wildcardPolicy: None

@@ -1,0 +1,158 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chino-api
+  namespace: stube
+  labels:
+    app: chino-api
+    product: chino
+    value-stream: stube
+    role: backend
+    env: prod
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: chino-api
+  template:
+    metadata:
+      labels:
+        app: chino-api
+        product: chino
+        value-stream: stube
+        role: backend
+        env: prod
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      imagePullSecrets:
+        - name: gitlab-registry
+      containers:
+        - name: app
+          image: zaentrum/chino-api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: ADDR
+              value: ":8080"
+            - name: OIDC_ISSUER
+              value: "https://sso.example/realms/zaentrum"
+            - name: OIDC_AUDIENCE
+              value: "chino-web"
+            - name: OIDC_ENABLED
+              value: "true"
+            # Unified `chino` public client for all platforms (web code+PKCE,
+            # mobile AppAuth+PKCE, TV device+PKCE). Its tokens carry aud=chino-web
+            # (audience mapper) so OIDC_AUDIENCE stays chino-web — no audience churn.
+            - name: OIDC_CLIENT_ID_TV
+              value: "chino"
+            - name: OIDC_CLIENT_ID_MOBILE
+              value: "chino"
+            - name: OIDC_CLIENT_ID_WEB
+              value: "chino"
+            # ADR-011 read/write split — chino-api is purely a read
+            # consumer, so it talks to katalog-api (Go, cloud_katalog_ro
+            # role) for metadata + chino-stream for bytes. Writes never
+            # originate here.
+            - name: KATALOG_BASE_URL
+              value: "http://katalog-api.stube.svc.cluster.local"
+            # chino-stream serves HLS + trickplay + /play/info. Bytes
+            # never leave the NFS PVC read path — chino-stream mounts
+            # /var/lib/katalog/media and /var/lib/katalog/packages
+            # directly. chino-api only forwards the player URL.
+            - name: STREAM_BASE_URL
+              value: "http://chino-stream.stube.svc.cluster.local"
+            # ARTWORK_BASE_URL → katalog-manager-api. Artwork blobs
+            # live in itemartworkdata which is owned by the write
+            # surface; katalog-api hasn't grown an artwork endpoint
+            # yet. When it does, point this at katalog-api too and
+            # delete the env var.
+            - name: ARTWORK_BASE_URL
+              value: "http://katalog-manager-api.stube.svc.cluster.local"
+            # ANALYZER_BASE_URL — admin packaging trigger forwards
+            # POST /api/v1/admin/items/{id}/package + step lookups to
+            # katalog-manager-api's AnalyzerController.
+            - name: ANALYZER_BASE_URL
+              value: "http://katalog-manager-api.stube.svc.cluster.local"
+            # Comma-separated Keycloak `sub` claims that may call
+            # /api/v1/admin/* endpoints. Empty = nobody. Future: switch
+            # to a realm-role check ("admin") so we don't redeploy on
+            # team changes. Source-of-truth here so chino-api doesn't
+            # have to read Keycloak roles to enforce.
+            - name: ADMIN_SUBJECTS
+              value: "00000000-0000-0000-0000-000000000000"
+            # DB_USER / DB_PASSWORD must be declared BEFORE PG_URL — k8s
+            # only expands $(VAR) for vars already in the env list.
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef: { name: chino-db, key: user }
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: chino-db, key: password }
+            # chino-api owns its own `chino` database on the acid Postgres
+            # cluster (separate from katalog's DB) and connects as
+            # cloud_chinoapi — the role has DML on chino, none on katalog.
+            - name: PG_URL
+              value: "postgres://$(DB_USER):$(DB_PASSWORD)@postgres.example:5432/chino?sslmode=require"
+            # Shared HMAC secret used by chino-api (mints) and
+            # katalog-stream (verifies) for the long-lived `?stream=`
+            # token on <video src>. MUST be the same value in both
+            # namespaces; missing secret leaves each pod on its own
+            # ephemeral key (chino-api-signed URLs won't validate at
+            # katalog-stream → player falls back to OIDC bearer).
+            # Create with:
+            #   k=$(openssl rand -base64 32)
+            #   kubectl -n stube create secret generic chino-stream-signing --from-literal=key="$k"
+            # (Same secret across the namespace covers both chino-api
+            # mint side and chino-stream verify side.)
+            - name: STREAM_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: chino-stream-signing
+                  key: key
+                  optional: true
+            # Bug-report pipeline (POST /api/v1/feedback) → OpenProject.
+            # Reports land as Bug work packages in the feedback project,
+            # created as a dedicated service user. The token comes from
+            # the chino-openproject secret; when absent the endpoint
+            # answers 503 and the clients keep the feature off.
+            - name: OPENPROJECT_URL
+              value: "https://openproject.example"
+            - name: OPENPROJECT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: chino-openproject
+                  key: token
+                  optional: true
+            - name: OPENPROJECT_PROJECT_ID
+              value: "36"
+            - name: OPENPROJECT_BUG_TYPE_ID
+              value: "7"
+          livenessProbe:
+            httpGet:
+              path: /api/healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
