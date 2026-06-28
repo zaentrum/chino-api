@@ -1,0 +1,320 @@
+openapi: 3.0.3
+info:
+  title: chino-api
+  version: 0.1.0
+  description: Backend API for the chino product of the zaentrum platform.
+servers:
+  - url: /api
+paths:
+  /healthz:
+    get:
+      summary: Liveness / readiness probe
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  product: { type: string }
+  /v1/me:
+    get:
+      summary: Echo the caller's OIDC subject
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: OK
+        "401":
+          description: Unauthorized
+  /v1/items:
+    get:
+      summary: List items for this product (stub during beta)
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: OK
+  /v1/me/watchlists:
+    get:
+      summary: List the caller's named watchlists
+      description: Default list first, then others by createdAt ascending.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  lists:
+                    type: array
+                    items: { $ref: "#/components/schemas/Watchlist" }
+        "401":
+          description: Unauthorized
+    post:
+      summary: Create a new named watchlist
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 60 }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Watchlist" }
+        "400":
+          description: Empty / over-length name
+        "409":
+          description: Too many lists (max 50) or case-insensitive duplicate name
+  /v1/me/watchlists/memberships:
+    get:
+      summary: Which of the caller's lists each item belongs to
+      description: >
+        Powers the add-to-list picker checkmarks and the card "saved" badge.
+        Items not in any list may be omitted or map to an empty array.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: ids
+          required: true
+          schema: { type: string }
+          description: comma-separated item ids (max ~100)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  memberships:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items: { type: string }
+        "401":
+          description: Unauthorized
+  /v1/me/watchlists/{listId}:
+    get:
+      summary: A single list's metadata + item ids
+      description: Items newest-added first.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: listId
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+                  isDefault: { type: boolean }
+                  items:
+                    type: array
+                    items: { type: string }
+        "404":
+          description: Not the caller's list
+    patch:
+      summary: Rename a list
+      description: Renaming the default list keeps isDefault=true.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: listId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 60 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Watchlist" }
+        "400":
+          description: Empty / over-length name
+        "404":
+          description: Not the caller's list
+        "409":
+          description: Case-insensitive duplicate name
+    delete:
+      summary: Delete a list (cascades its items)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: listId
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not the caller's list
+        "409":
+          description: Cannot delete the default list
+  /v1/me/watchlists/{listId}/items/{itemId}:
+    put:
+      summary: Add an item to a list (idempotent)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: listId
+          required: true
+          schema: { type: string }
+        - in: path
+          name: itemId
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Added (or already present)
+        "404":
+          description: Not the caller's list
+    delete:
+      summary: Remove an item from a list (idempotent)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: listId
+          required: true
+          schema: { type: string }
+        - in: path
+          name: itemId
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Removed (or already absent)
+        "404":
+          description: Not the caller's list
+  /v1/me/watchlist:
+    get:
+      summary: The default list's item ids (back-compat alias)
+      description: >
+        Back-compat alias kept for already-installed mobile/TV builds. Now
+        maps to the caller's default list (lazily created on first access).
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { type: string }
+        "401":
+          description: Unauthorized
+  /v1/me/watchlist/{id}:
+    put:
+      summary: Add an item to the default list (back-compat alias)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Added (or already present)
+    delete:
+      summary: Remove an item from the default list (back-compat alias)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Removed (or already absent)
+  /v1/feedback:
+    post:
+      summary: Submit a bug / feedback report (becomes an OpenProject ticket)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [report]
+              properties:
+                report:
+                  type: object
+                  required: [source, kind, description]
+                  properties:
+                    source: { type: string, enum: [web, mobile, tv] }
+                    kind: { type: string, enum: [manual, error, crash, player] }
+                    title: { type: string }
+                    description: { type: string }
+                    fingerprint:
+                      type: string
+                      description: lowercase hex sha-256 of the normalized error signature; omit for manual reports
+                    context:
+                      type: object
+                      additionalProperties: { type: string }
+                screenshot:
+                  type: string
+                  format: binary
+                  description: image/png or image/jpeg, max 3 MB
+      responses:
+        "200":
+          description: Deduplicated — comment appended to the existing ticket
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer }
+                  url: { type: string }
+                  duplicate: { type: boolean }
+        "201":
+          description: New ticket created (same body shape, duplicate=false)
+        "400":
+          description: Invalid report (bad enum, empty description, oversized or non-png/jpeg screenshot)
+        "401":
+          description: Unauthorized
+        "429":
+          description: Rate limited (5 reports / 10 min per user)
+        "503":
+          description: Feedback pipeline not configured (no OpenProject token)
+components:
+  schemas:
+    Watchlist:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        itemCount: { type: integer }
+        isDefault: { type: boolean }
+        createdAt: { type: string, format: date-time }
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
