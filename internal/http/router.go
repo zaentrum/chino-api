@@ -52,6 +52,9 @@ func NewRouter(cfg config.Config, st *store.Store) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Artwork URLs (<img>) can't send a bearer, so poster/backdrop URLs are
+	// stamped with a ?stream= token minted by this signer (see stampArtworkTokens).
+	SetStreamSigner(signer)
 	verifier := auth.NewVerifier(cfg.OIDCIssuer, cfg.OIDCAudience, cfg.OIDCEnabled).WithStreamSigner(signer)
 	kc := katalog.New(cfg.KatalogBaseURL)
 	kc.StreamBaseURL = cfg.StreamBaseURL
