@@ -103,12 +103,6 @@ func listWatched(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 				compact = append(compact, out[i])
 			}
 		}
-		// Stamp artwork ?stream= tokens (this list is built outside stampWatched).
-		ptrs := make([]*katalog.Item, len(compact))
-		for i := range compact {
-			ptrs[i] = &compact[i].Item
-		}
-		stampArtworkTokens(userID, ptrs)
 		writeJSON(w, http.StatusOK, map[string]any{"items": compact})
 	}
 }

@@ -2,72 +2,17 @@ package http
 
 import (
 	"context"
-	"strings"
-	"time"
 
-	"github.com/zaentrum/chino-api/internal/auth"
 	"github.com/zaentrum/chino-api/internal/katalog"
 	"github.com/zaentrum/chino-api/internal/store"
 )
-
-// artworkTokenTTL bounds a poster/backdrop stream token. Longer than the player
-// token — artwork is heavily cached and non-sensitive, and each list fetch
-// re-mints one anyway.
-const artworkTokenTTL = 24 * time.Hour
-
-// streamSigner mints the ?stream= tokens stamped onto artwork URLs. Set once at
-// router construction (SetStreamSigner); nil disables stamping.
-var streamSigner *auth.Signer
-
-// SetStreamSigner wires the HMAC signer used to authenticate <img> artwork
-// requests, which can't carry an Authorization header.
-func SetStreamSigner(s *auth.Signer) { streamSigner = s }
-
-// stampArtworkTokens appends a per-user ?stream=<token> to each item's poster
-// and backdrop URL so a plain <img src> authenticates via StreamMiddleware (the
-// token then rides through the artwork proxy to katalog-manager-api, which
-// shares the signing key). One token per call, bound to userID. No-op without a
-// signer or userID.
-func stampArtworkTokens(userID string, items []*katalog.Item) {
-	if streamSigner == nil || userID == "" || len(items) == 0 {
-		return
-	}
-	token, _ := streamSigner.Mint(userID, artworkTokenTTL)
-	if token == "" {
-		return
-	}
-	for _, it := range items {
-		if it == nil {
-			continue
-		}
-		it.PosterURL = appendStreamToken(it.PosterURL, token)
-		it.BackdropURL = appendStreamToken(it.BackdropURL, token)
-	}
-}
-
-func appendStreamToken(u, token string) string {
-	if u == "" || strings.Contains(u, "stream=") {
-		return u
-	}
-	sep := "?"
-	if strings.Contains(u, "?") {
-		sep = "&"
-	}
-	return u + sep + "stream=" + token
-}
 
 // stampWatched annotates each item with the current user's watched_at
 // timestamp (when present in watched_history). Mutates in place; safe
 // on nil items / empty slice. Best-effort: a DB error just leaves
 // WatchedAt unset rather than failing the whole list response.
 func stampWatched(ctx context.Context, st *store.Store, userID string, items []*katalog.Item) {
-	if userID == "" || len(items) == 0 {
-		return
-	}
-	// Authenticate the <img> artwork requests (poster/backdrop) — needs only
-	// the signer + userID, so it runs even if the watched-history store is nil.
-	stampArtworkTokens(userID, items)
-	if st == nil {
+	if st == nil || userID == "" || len(items) == 0 {
 		return
 	}
 	ids := make([]string, 0, len(items))
