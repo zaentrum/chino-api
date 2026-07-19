@@ -74,6 +74,11 @@ type Config struct {
 	OIDCClientIDTV     string
 	OIDCClientIDMobile string
 	OIDCClientIDWeb    string
+	// OIDCClientIDPortal is the zaentrum portal shell's client. The portal
+	// SPA bakes `zaentrum-web` (its own client on the bundled realm) and
+	// adopts this at runtime via /api/config — on a SHARED realm the
+	// deployment points it at the per-instance client instead.
+	OIDCClientIDPortal string
 
 	// PublicBaseURL, when set, is the canonical external origin of this
 	// chino-api (e.g. https://chino.example.com). GET /api/config reports
@@ -115,6 +120,7 @@ func Load() Config {
 		OIDCClientIDTV:     envDefault("OIDC_CLIENT_ID_TV", "chino"),
 		OIDCClientIDMobile: envDefault("OIDC_CLIENT_ID_MOBILE", "chino"),
 		OIDCClientIDWeb:    envDefault("OIDC_CLIENT_ID_WEB", "chino"),
+		OIDCClientIDPortal: envDefault("OIDC_CLIENT_ID_PORTAL", "zaentrum-web"),
 		PublicBaseURL:      envDefault("PUBLIC_BASE_URL", ""),
 
 		OpenProjectURL:       envDefault("OPENPROJECT_URL", "https://openproject.example"),
