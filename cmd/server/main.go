@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/zaentrum/chino-api/internal/config"
+	"github.com/zaentrum/chino-api/internal/eventsse"
 	chinohttp "github.com/zaentrum/chino-api/internal/http"
 	"github.com/zaentrum/chino-api/internal/store"
 )
@@ -33,7 +34,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	router, err := chinohttp.NewRouter(cfg, st)
+	// Live-refresh SSE bridge: tail the catalog Kafka topics into an in-process
+	// broker (inert without brokers); browsers subscribe on /api/v1/events.
+	events := eventsse.NewBroker()
+
+	router, err := chinohttp.NewRouter(cfg, st, events)
 	if err != nil {
 		slog.Error("router init failed", "err", err)
 		os.Exit(1)
@@ -58,6 +63,8 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	go events.Run(ctx, cfg.KafkaBrokers, cfg.KafkaCertDir)
 
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
