@@ -89,6 +89,11 @@ type Config struct {
 	// off — keeps local dev and self-host installs working untouched.
 	OpenProjectURL       string
 	OpenProjectToken     string
+
+	// Kafka catalog-event tail for the live-refresh SSE bridge (/api/v1/events).
+	// Empty brokers => the bridge is inert (endpoint serves heartbeats only).
+	KafkaBrokers []string
+	KafkaCertDir string
 	OpenProjectProjectID int
 	OpenProjectBugTypeID int
 }
@@ -115,6 +120,9 @@ func Load() Config {
 		OpenProjectToken:     envDefault("OPENPROJECT_TOKEN", ""),
 		OpenProjectProjectID: envInt("OPENPROJECT_PROJECT_ID", 36),
 		OpenProjectBugTypeID: envInt("OPENPROJECT_BUG_TYPE_ID", 7),
+
+		KafkaBrokers: splitCSV(envDefault("KAFKA_BROKERS", "")),
+		KafkaCertDir: envDefault("KAFKA_CERT_DIR", ""),
 	}
 	return c
 }

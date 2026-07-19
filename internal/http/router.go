@@ -12,13 +12,14 @@ import (
 
 	"github.com/zaentrum/chino-api/internal/auth"
 	"github.com/zaentrum/chino-api/internal/config"
+	"github.com/zaentrum/chino-api/internal/eventsse"
 	"github.com/zaentrum/chino-api/internal/katalog"
 	"github.com/zaentrum/chino-api/internal/metrics"
 	"github.com/zaentrum/chino-api/internal/openproject"
 	"github.com/zaentrum/chino-api/internal/store"
 )
 
-func NewRouter(cfg config.Config, st *store.Store) (http.Handler, error) {
+func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (http.Handler, error) {
 	r := chi.NewRouter()
 
 	SetAdminSubjects(cfg.AdminSubjects)
@@ -159,6 +160,14 @@ func NewRouter(cfg config.Config, st *store.Store) (http.Handler, error) {
 			// through the rest of the chain.
 			r.Post("/admin/items/{id}/package", postPackageRequest(cfg.KatalogBaseURL))
 			r.Get("/admin/items/{id}/package", getPackageStatus(cfg.KatalogBaseURL))
+		})
+
+		// Live catalog stream (SSE): bearer-authed, in its OWN group — the
+		// default group's 2-minute timeout would sever long-lived streams
+		// (the server's WriteTimeout is already 0 for exactly this reason).
+		r.Group(func(r chi.Router) {
+			r.Use(verifier.Middleware)
+			r.Get("/events", events.Handler)
 		})
 
 		// Play + media-asset group: stream token accepted alongside the
