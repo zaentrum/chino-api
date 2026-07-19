@@ -92,8 +92,9 @@ type Config struct {
 
 	// Kafka catalog-event tail for the live-refresh SSE bridge (/api/v1/events).
 	// Empty brokers => the bridge is inert (endpoint serves heartbeats only).
-	KafkaBrokers []string
-	KafkaCertDir string
+	KafkaBrokers     []string
+	KafkaCertDir     string
+	KafkaTopicPrefix string // per-tenant topic prefix on a shared cluster (default "stube.")
 	OpenProjectProjectID int
 	OpenProjectBugTypeID int
 }
@@ -121,8 +122,9 @@ func Load() Config {
 		OpenProjectProjectID: envInt("OPENPROJECT_PROJECT_ID", 36),
 		OpenProjectBugTypeID: envInt("OPENPROJECT_BUG_TYPE_ID", 7),
 
-		KafkaBrokers: splitCSV(envDefault("KAFKA_BROKERS", "")),
-		KafkaCertDir: envDefault("KAFKA_CERT_DIR", ""),
+		KafkaBrokers:     splitCSV(envDefault("KAFKA_BROKERS", "")),
+		KafkaCertDir:     envDefault("KAFKA_CERT_DIR", ""),
+		KafkaTopicPrefix: envDefault("KAFKA_TOPIC_PREFIX", "stube."),
 	}
 	return c
 }
