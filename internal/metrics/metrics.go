@@ -99,6 +99,19 @@ func (s *statusRecorder) WriteHeader(code int) {
 	s.ResponseWriter.WriteHeader(code)
 }
 
+// Flush forwards http.Flusher through the wrapper — embedding the
+// ResponseWriter INTERFACE promotes only its three methods, so without this
+// the SSE bridge's `w.(http.Flusher)` assertion fails ("streaming
+// unsupported") for every wrapped handler.
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap lets http.NewResponseController reach the underlying writer.
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
 // Handler returns the Prometheus scrape handler. Mounted at /metrics
 // without auth — chino-api's pod is unreachable from outside the cluster
 // and the scrape job is in the cluster Prometheus.
