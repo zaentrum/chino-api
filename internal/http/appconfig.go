@@ -30,6 +30,7 @@ func appConfig(cfg config.Config) http.HandlerFunc {
 				"tv":     cfg.OIDCClientIDTV,
 				"mobile": cfg.OIDCClientIDMobile,
 				"web":    cfg.OIDCClientIDWeb,
+				"portal": cfg.OIDCClientIDPortal,
 			},
 		})
 	}
