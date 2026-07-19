@@ -36,6 +36,7 @@ var topics = []string{
 	"stube.catalog.item.analyzed",
 	"stube.catalog.item.transcoded",
 	"stube.catalog.item.packaged", // pipeline end: the item became watchable
+	"stube.catalog.item.removed",  // catalog deletion — drop the item from open UIs
 }
 
 const (
