@@ -64,7 +64,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	go events.Run(ctx, cfg.KafkaBrokers, cfg.KafkaCertDir)
+	go events.Run(ctx, cfg.KafkaBrokers, cfg.KafkaCertDir, cfg.KafkaTopicPrefix)
 
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

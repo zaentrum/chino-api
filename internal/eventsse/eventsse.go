@@ -29,14 +29,25 @@ import (
 	kafka "github.com/segmentio/kafka-go"
 )
 
-// The catalog pipeline topics (mirror katalog-manager's events package).
-var topics = []string{
-	"stube.catalog.item.discovered",
-	"stube.catalog.item.enriched",
-	"stube.catalog.item.analyzed",
-	"stube.catalog.item.transcoded",
-	"stube.catalog.item.packaged", // pipeline end: the item became watchable
-	"stube.catalog.item.removed",  // catalog deletion — drop the item from open UIs
+// catalogTopics derives the pipeline topic names from the tenant prefix
+// (mirrors katalog-manager's events.Configure — a shared cluster hosts multiple
+// platform instances, each under its own prefix).
+func catalogTopics(prefix string) []string {
+	p := strings.TrimSpace(prefix)
+	if p == "" {
+		p = "stube."
+	}
+	if !strings.HasSuffix(p, ".") {
+		p += "."
+	}
+	return []string{
+		p + "catalog.item.discovered",
+		p + "catalog.item.enriched",
+		p + "catalog.item.analyzed",
+		p + "catalog.item.transcoded",
+		p + "catalog.item.packaged", // pipeline end: the item became watchable
+		p + "catalog.item.removed",  // catalog deletion — drop the item from open UIs
+	}
 }
 
 const (
@@ -149,11 +160,12 @@ func (b *Broker) Handler(w http.ResponseWriter, r *http.Request) {
 // Run consumes the catalog topics into the broker until ctx is cancelled.
 // brokers empty => logged no-op. The group is unique per pod so every replica
 // sees every event (each fans out only to its own connected clients).
-func (b *Broker) Run(ctx context.Context, brokers []string, certDir string) {
+func (b *Broker) Run(ctx context.Context, brokers []string, certDir, topicPrefix string) {
 	if len(brokers) == 0 {
 		slog.Info("eventsse: no Kafka brokers configured; live refresh inactive")
 		return
 	}
+	topics := catalogTopics(topicPrefix)
 	tlsCfg, err := maybeTLS(certDir)
 	if err != nil {
 		slog.Warn("eventsse: kafka TLS material unreadable; consumer not started", "err", err)
