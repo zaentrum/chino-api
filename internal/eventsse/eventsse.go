@@ -35,6 +35,7 @@ var topics = []string{
 	"stube.catalog.item.enriched",
 	"stube.catalog.item.analyzed",
 	"stube.catalog.item.transcoded",
+	"stube.catalog.item.packaged", // pipeline end: the item became watchable
 }
 
 const (
