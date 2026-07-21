@@ -44,6 +44,11 @@ type Config struct {
 	// only; no auth on the analyzer side beyond NetworkPolicy.
 	AnalyzerBaseURL string
 
+	// PortalBaseURL is the in-cluster URL of portal-api. chino forwards the
+	// user's bearer to GET /api/portal/slots/{slot} to surface addon-contributed
+	// extension buttons. Empty/unreachable => no extensions (empty slot).
+	PortalBaseURL string
+
 	// AdminSubjects is the comma-separated allowlist of Keycloak `sub`
 	// values that may call POST /api/v1/admin/* endpoints (currently
 	// just the packaging trigger). Empty list = nobody can; useful for
@@ -114,6 +119,7 @@ func Load() Config {
 		StreamBaseURL:      envDefault("STREAM_BASE_URL", "http://chino-stream.stube.svc.cluster.local"),
 		ArtworkBaseURL:     envDefault("ARTWORK_BASE_URL", "http://katalog-manager-api.stube.svc.cluster.local"),
 		AnalyzerBaseURL:    envDefault("ANALYZER_BASE_URL", "http://katalog-manager-api.stube.svc.cluster.local"),
+		PortalBaseURL:      envDefault("PORTAL_BASE_URL", "http://portal-api"),
 		AdminSubjects:      splitCSV(envDefault("ADMIN_SUBJECTS", "")),
 		PgURL:              envDefault("PG_URL", ""),
 		StreamSigningKey:   envDefault("STREAM_SIGNING_KEY", ""),

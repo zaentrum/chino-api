@@ -16,6 +16,7 @@ import (
 	"github.com/zaentrum/chino-api/internal/katalog"
 	"github.com/zaentrum/chino-api/internal/metrics"
 	"github.com/zaentrum/chino-api/internal/openproject"
+	"github.com/zaentrum/chino-api/internal/portal"
 	"github.com/zaentrum/chino-api/internal/store"
 )
 
@@ -63,6 +64,9 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 	// StreamBaseURL off the client struct so a single field is plenty.
 	streamKC := katalog.New(cfg.StreamBaseURL)
 	streamKC.StreamBaseURL = cfg.StreamBaseURL
+	// Portal client for addon UI-extension slots (best-effort; empty when the
+	// portal is unset/unreachable, so a no-addon instance shows no extra UI).
+	pc := portal.New(cfg.PortalBaseURL)
 	// OpenProject client for the bug-report pipeline. Nil when no token
 	// is configured — postFeedback answers 503 and the clients treat
 	// the feature as off.
@@ -102,6 +106,11 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			r.Get("/series/{id}/next-episode", nextEpisode(kc, st))
 			r.Get("/genres", listGenres(kc))
 			r.Get("/items/{id}/subtitles", subtitlesList(kc))
+
+			// Addon UI-extension slots: the SPA asks for the contributions
+			// for a named slot (e.g. search.empty) and renders them natively.
+			// Empty for a no-addon instance.
+			r.Get("/extensions", listExtensions(pc))
 
 			// User-state endpoints (chino-api owns these, not katalog-stream).
 			// Resume position: GET returns the last saved second; POST writes
@@ -478,4 +487,18 @@ func bearerFrom(r *http.Request) string {
 		return ""
 	}
 	return strings.TrimPrefix(h, "Bearer ")
+}
+
+// listExtensions serves the addon UI-extension contributions for a slot
+// (?slot=search.empty), forwarding the caller's bearer to portal-api. Always
+// 200 with an array — empty when no portal / no contributions.
+func listExtensions(pc *portal.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slot := r.URL.Query().Get("slot")
+		exts := pc.SlotExtensions(r.Context(), slot, bearerFrom(r))
+		if exts == nil {
+			exts = []portal.Extension{}
+		}
+		writeJSON(w, http.StatusOK, exts)
+	}
 }
