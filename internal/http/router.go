@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -271,9 +272,14 @@ func whoAmI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"sub": sub})
 }
 
-// listItems queries one of katalog's entity sets based on `?type=`. Falls
-// back to the legacy sample stub if katalog is unreachable so the UI still
-// has something to render.
+// listItems queries one of katalog's entity sets based on `?type=`.
+//
+// When katalog fails it returns an ERROR. It used to answer HTTP 200 with four
+// hardcoded sample films and source:"fallback" — so a catalog outage looked to
+// every client like a working catalog containing titles that do not exist.
+// chino-web filtered them by source=="katalog"; no other client did, so the TV
+// and mobile apps rendered fabricated content as real. An empty rail or an
+// explicit error is honest; invented content is not.
 func listItems(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		bearer := bearerFrom(r)
@@ -335,11 +341,14 @@ func listItems(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 			}
 		}
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{
-				"product":    "chino",
-				"items":      sampleItems(),
-				"source":     "fallback",
-				"katalogErr": err.Error(),
+			// 502: katalog is upstream of us and it is what failed. The client
+			// can say "the catalog is unavailable" — which is true, actionable,
+			// and cannot be mistaken for content.
+			log.Printf("chino-api: katalog list failed (type=%q q=%q): %v", typ, q, err)
+			writeJSON(w, http.StatusBadGateway, map[string]any{
+				"product": "chino",
+				"error":   "catalog unavailable",
+				"detail":  err.Error(),
 			})
 			return
 		}
