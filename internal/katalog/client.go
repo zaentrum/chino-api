@@ -17,7 +17,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -96,11 +95,23 @@ type Item struct {
 	WatchedAt *time.Time `json:"watched_at,omitempty"`
 }
 
+// CastEntry is one credit, as katalog-api sends it. Role is an open
+// vocabulary (actor, creator, director, writer, producer, composer,
+// cinematographer, editor, or any other token); a client shows the roles it
+// knows.
 type CastEntry struct {
 	// PersonID deep-links a cast chip to /people/{id} (filmography).
 	PersonID string `json:"person_id,omitempty"`
 	Name     string `json:"name"`
 	Role     string `json:"role"`
+	// Job is the job within the role ("Screenplay"), Character the part an
+	// actor plays, Order the billing order within the role (0 first — a
+	// pointer, so 0 survives the round-trip) and EpisodeCount how many
+	// episodes of a series the credit covers. Each is omitted when unknown.
+	Job          string `json:"job,omitempty"`
+	Character    string `json:"character,omitempty"`
+	Order        *int   `json:"order,omitempty"`
+	EpisodeCount *int   `json:"episode_count,omitempty"`
 }
 
 type Subtitle struct {
@@ -189,17 +200,10 @@ func (u upstreamItem) toItem() Item {
 			HasRecap:   u.Segments.HasRecap,
 		}
 	}
-	// Cast top-N is a chino-web concern, not katalog-api's; do the
-	// "actors first, max 8" trim here so every consumer gets the same
-	// shape.
-	sort.SliceStable(it.Cast, func(i, j int) bool {
-		ai := it.Cast[i].Role == "actor"
-		aj := it.Cast[j].Role == "actor"
-		return ai && !aj
-	})
-	if len(it.Cast) > 8 {
-		it.Cast = it.Cast[:8]
-	}
+	// The cast passes through as katalog-api orders and caps it: role by
+	// role, billing order within a role, at most 20 actors and 10 people
+	// of every other role. Trimming it here (it kept the first 8, actors
+	// first) dropped every crew credit of a title with eight actors.
 	return it
 }
 
