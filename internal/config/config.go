@@ -97,14 +97,14 @@ type Config struct {
 	// (HTTP Basic "apikey:<token>"). When OpenProjectToken is empty the
 	// feedback endpoint answers 503 and the clients treat the feature as
 	// off — keeps local dev and self-host installs working untouched.
-	OpenProjectURL       string
-	OpenProjectToken     string
+	OpenProjectURL   string
+	OpenProjectToken string
 
 	// Kafka catalog-event tail for the live-refresh SSE bridge (/api/v1/events).
 	// Empty brokers => the bridge is inert (endpoint serves heartbeats only).
-	KafkaBrokers     []string
-	KafkaCertDir     string
-	KafkaTopicPrefix string // per-tenant topic prefix on a shared cluster (default "stube.")
+	KafkaBrokers         []string
+	KafkaCertDir         string
+	KafkaTopicPrefix     string // per-tenant topic prefix on a shared cluster (default "stube.")
 	OpenProjectProjectID int
 	OpenProjectBugTypeID int
 }

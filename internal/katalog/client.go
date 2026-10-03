@@ -147,11 +147,11 @@ type upstreamItem struct {
 	ParentID      string  `json:"parent_id"`
 
 	// Populated only by GET /items/{id}?include=…; absent on list responses.
-	Genres    []string                 `json:"genres,omitempty"`
-	Cast      []CastEntry              `json:"cast,omitempty"`
-	Subtitles []Subtitle               `json:"subtitles,omitempty"`
-	Trailers  []Trailer                `json:"trailers,omitempty"`
-	Segments  *upstreamSegmentSummary  `json:"segments,omitempty"`
+	Genres    []string                `json:"genres,omitempty"`
+	Cast      []CastEntry             `json:"cast,omitempty"`
+	Subtitles []Subtitle              `json:"subtitles,omitempty"`
+	Trailers  []Trailer               `json:"trailers,omitempty"`
+	Segments  *upstreamSegmentSummary `json:"segments,omitempty"`
 }
 
 type upstreamSegmentSummary struct {
@@ -534,9 +534,9 @@ func (c *Client) PlayInfoDurationMs(ctx context.Context, bearer, itemID string) 
 // the response body verbatim. Routing is by path prefix because
 // chino-api stitches three upstreams behind one client today:
 //
-//   /api/play/...    → StreamBaseURL  (chino-stream)
-//   /api/artwork/... → ArtworkBaseURL (katalog-manager-api)
-//   anything else    → BaseURL        (katalog-api read surface)
+//	/api/play/...    → StreamBaseURL  (chino-stream)
+//	/api/artwork/... → ArtworkBaseURL (katalog-manager-api)
+//	anything else    → BaseURL        (katalog-api read surface)
 //
 // When katalog-api grows an artwork endpoint, set ArtworkBaseURL to
 // the same value as BaseURL and ProxyStream picks the new home
