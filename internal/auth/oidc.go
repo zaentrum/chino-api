@@ -60,9 +60,11 @@ func (v *Verifier) Middleware(next http.Handler) http.Handler {
 }
 
 // StreamMiddleware additionally accepts `?stream=<signed-token>` minted
-// by Signer. Used only on /play* routes so the long-lived stream token
-// can't be exchanged into general /me/* access. Falls through to
-// standard bearer / ?token= auth when ?stream= is absent or invalid.
+// by Signer. Used only where a client has to put its credential in a URL
+// (the media and artwork routes, the /events stream, the /play/events
+// beacon) so the long-lived stream token can't be exchanged into general
+// /me/* access. Falls through to standard bearer / ?token= auth when
+// ?stream= is absent or invalid.
 func (v *Verifier) StreamMiddleware(next http.Handler) http.Handler {
 	return v.middleware(next, true)
 }
@@ -86,10 +88,13 @@ func (v *Verifier) middleware(next http.Handler, allowStream bool) http.Handler 
 				// the player gets a clean 401 it can re-mint from.
 			}
 		}
-		// `<video src>` and `<img src>` cannot set Authorization headers, so
-		// for the streaming + artwork endpoints we also accept the bearer in
-		// the `?token=` query string. Tradeoff: the token is visible in
-		// access logs and the browser history.
+		// DEPRECATED: the bearer in the `?token=` query string. It is how
+		// <img src>, sendBeacon and the like authenticated before the
+		// stream token covered them (StreamMiddleware). It stays accepted
+		// for one more release so clients can move to ?stream= or a header,
+		// then it goes: a bearer in a URL ends up in browser history and in
+		// the logs of everything on the way. chino-api's own request log
+		// shows it as ?token=REDACTED, which tells who still sends it.
 		auth := r.Header.Get("Authorization")
 		var raw string
 		if strings.HasPrefix(auth, "Bearer ") {

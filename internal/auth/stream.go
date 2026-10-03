@@ -28,8 +28,9 @@ import (
 // Bound to a user, not to a specific item. The blast radius if a token
 // leaks is "attacker can stream this user's media for the remaining
 // TTL" — the same scope as a leaked OIDC access token, just with a
-// longer expiry. Restricted server-side to play routes only via
-// StreamMiddleware so it can't be used to poke at /me/* endpoints.
+// longer expiry. Restricted server-side via StreamMiddleware to the media
+// and artwork routes, the /events stream and the /play/events beacon, so
+// it can't be used to poke at /me/* endpoints.
 type Signer struct {
 	key []byte
 }

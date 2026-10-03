@@ -118,8 +118,9 @@ paths:
     get:
       summary: A person's portrait (what profile_url points at)
       description: >
-        Proxied from the catalog manager with the posters' auth: a bearer,
-        ?token= or ?stream= (a stream token), so an <img src> works. Range and
+        Proxied from the catalog manager with the posters' auth: a bearer
+        or ?stream= (a stream token), so an <img src> works (?token=, the
+        bearer in the URL, is deprecated and goes in the next release). Range and
         If-None-Match pass through; so do the upstream's status and headers
         (ETag, 304, 404).
       security: [{ bearerAuth: [] }, { streamToken: [] }]

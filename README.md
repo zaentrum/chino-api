@@ -35,7 +35,8 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `GET /api/v1/me/continue-watching` | bearer JWT | resume list |
 | `GET /api/v1/me/watchlists` | bearer JWT | named watchlists |
 | `GET/POST /api/v1/items/{id}/progress` | bearer JWT | playback progress |
-| `POST /api/v1/play/events` | bearer JWT | playback telemetry |
+| `POST /api/v1/play/events` | bearer JWT or stream token | playback telemetry (the stream token for `sendBeacon`) |
+| `GET /api/v1/events` | bearer JWT or stream token | live catalog notifications (SSE) |
 | `POST /api/v1/feedback` | bearer JWT | bug report → OpenProject (503 when unconfigured) |
 
 ## Local development
@@ -52,6 +53,12 @@ Disable OIDC for local poking:
 OIDC_ENABLED=false go run ./cmd/server
 curl -sS http://localhost:8080/api/v1/items
 ```
+
+Where a client cannot set an `Authorization` header (an `<img>` or `<video>`
+URL, `sendBeacon`, an `EventSource`), it authenticates with `?stream=<token>`,
+a stream token from `POST /api/v1/me/stream-token`. The bearer in the URL
+(`?token=`) is deprecated: it is still accepted in this release and goes in
+the next. The request log shows credential values as `REDACTED`.
 
 When `PG_URL` is empty, progress and telemetry endpoints answer gracefully but
 do not persist — keeps local dev simple. When `OPENPROJECT_TOKEN` is empty the

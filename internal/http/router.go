@@ -79,11 +79,12 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 	}
 
 	r.Route("/api/v1", func(r chi.Router) {
-		// Default group: OIDC bearer (header or ?token=). Stream
-		// tokens are NOT accepted here — they're scoped to playback
-		// only so a leaked stream token can't be exchanged for
-		// /me/watched or /items/* mutations. 2-minute timeout cap
-		// keeps non-stream routes from hanging on katalog upstreams.
+		// Default group: OIDC bearer (header or the deprecated ?token=).
+		// Stream tokens are NOT accepted here — they're scoped to the
+		// media routes, /events and /play/events, so a leaked stream
+		// token can't be exchanged for /me/watched or /items/*
+		// mutations. 2-minute timeout cap keeps non-stream routes from
+		// hanging on katalog upstreams.
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Timeout(2 * time.Minute))
 			r.Use(verifier.Middleware)
@@ -151,12 +152,6 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			r.Put("/me/likes/{id}", flagSet(st, likesSpec, true))
 			r.Delete("/me/likes/{id}", flagSet(st, likesSpec, false))
 
-			// Telemetry sink. The player batches events (play / pause / seek
-			// / waiting / stalled / error / quality switch / network rate)
-			// and POSTs them every ~30 s + on `pagehide`. Server logs each
-			// event as a structured JSON line for the cluster aggregator.
-			r.Post("/play/events", postTelemetry)
-
 			// Bug-report intake. Multipart (report JSON + optional
 			// screenshot) → OpenProject Bug work package, with
 			// fingerprint dedup + per-user rate limiting. Clients
@@ -174,12 +169,29 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			r.Get("/admin/items/{id}/package", getPackageStatus(cfg.KatalogBaseURL))
 		})
 
-		// Live catalog stream (SSE): bearer-authed, in its OWN group — the
-		// default group's 2-minute timeout would sever long-lived streams
-		// (the server's WriteTimeout is already 0 for exactly this reason).
+		// Live catalog stream (SSE), in its OWN group — the default
+		// group's 2-minute timeout would sever long-lived streams (the
+		// server's WriteTimeout is already 0 for exactly this reason).
+		// Bearer or stream token: an EventSource cannot set a header,
+		// and a ?stream= URL survives silent renews where a ?token= one
+		// changes (and reconnects) with every renewal. The events are
+		// thin catalog notifications, nothing of the user's.
 		r.Group(func(r chi.Router) {
-			r.Use(verifier.Middleware)
+			r.Use(verifier.StreamMiddleware)
 			r.Get("/events", events.Handler)
+		})
+
+		// Telemetry sink. The player batches events (play / pause / seek
+		// / waiting / stalled / error / quality switch / network rate)
+		// and POSTs them every ~30 s + on `pagehide`. Server logs each
+		// event as a structured JSON line for the cluster aggregator.
+		// Bearer or stream token: the pagehide flush goes out with
+		// navigator.sendBeacon, which cannot set a header either, and the
+		// sink only logs and counts — no user state to protect.
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.Timeout(2 * time.Minute))
+			r.Use(verifier.StreamMiddleware)
+			r.Post("/play/events", postTelemetry)
 		})
 
 		// Play + media-asset group: stream token accepted alongside the

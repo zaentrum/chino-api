@@ -19,9 +19,10 @@ const streamTokenTTL = 6 * time.Hour
 // kill the HTTP connection, and SIGKILL the in-flight ffmpeg.
 //
 // Bound to the user (not a specific item). Scoped server-side via
-// StreamMiddleware to /items/{id}/play* routes — a leaked token can
-// stream the user's media but can't poke at /me/* or /items/*
-// mutations.
+// StreamMiddleware to the URLs a client cannot put a header on — the
+// media and artwork routes, the /events stream, the /play/events beacon
+// — so a leaked token can stream the user's media (and post telemetry as
+// them) but can't poke at /me/* or /items/* mutations.
 func postStreamToken(signer *auth.Signer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := auth.SubjectFromContext(r.Context())
