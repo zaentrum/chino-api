@@ -60,7 +60,11 @@ func seriesEpisodes(kc *katalog.Client, st *store.Store) http.HandlerFunc {
 // watching. If `?after={episodeId}` is provided, take the episode after
 // that one (per (season,episode) ordering). Otherwise, use the user's
 // most recent playback_progress row for any episode of this series; if
-// nothing matches, fall back to S01E01.
+// nothing matches, fall back to the first episode, S01E01.
+//
+// Specials (season 0) are neither the first nor the next episode unless
+// the viewer is inside season 0 already: katalog lists them first, so a
+// series nobody had started used to begin with a special.
 func nextEpisode(kc *katalog.Client, st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		seriesID := chi.URLParam(r, "id")
@@ -103,19 +107,52 @@ func nextEpisode(kc *katalog.Client, st *store.Store) http.HandlerFunc {
 		}
 
 		if anchorIdx < 0 {
-			// No anchor: return the first episode.
-			writeJSON(w, http.StatusOK, map[string]any{"next": eps[0]})
+			// No anchor: the first episode.
+			writeJSON(w, http.StatusOK, map[string]any{"next": eps[firstEpisode(eps)]})
 			return
 		}
-		if anchorIdx+1 >= len(eps) {
+		next := episodeAfter(eps, anchorIdx)
+		if next < 0 {
 			writeJSON(w, http.StatusOK, map[string]any{"next": nil, "reason": "end_of_series"})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"next":   eps[anchorIdx+1],
+			"next":   eps[next],
 			"anchor": eps[anchorIdx].ID,
 		})
 	}
+}
+
+// isSpecial reports whether e is a special: an episode of season 0. One
+// without a season number is not.
+func isSpecial(e katalog.Item) bool {
+	return e.SeasonNumber != nil && *e.SeasonNumber == 0
+}
+
+// firstEpisode is the index in eps (non-empty, in (season, episode) order)
+// where a viewer who has not started the series begins: its first regular
+// episode — specials are extras, not the start. A series of nothing but
+// specials begins with the first of them.
+func firstEpisode(eps []katalog.Item) int {
+	for i, e := range eps {
+		if !isSpecial(e) {
+			return i
+		}
+	}
+	return 0
+}
+
+// episodeAfter is the index of the episode that follows eps[anchor]: the
+// next one in order, skipping specials unless the viewer is inside season
+// 0 (the anchor is a special). -1 at the end of the series.
+func episodeAfter(eps []katalog.Item, anchor int) int {
+	inSpecials := isSpecial(eps[anchor])
+	for i := anchor + 1; i < len(eps); i++ {
+		if inSpecials || !isSpecial(eps[i]) {
+			return i
+		}
+	}
+	return -1
 }
 
 func episodeIDs(eps []katalog.Item) []string {
