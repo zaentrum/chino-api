@@ -63,3 +63,16 @@ func getPerson(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, pd)
 	}
 }
+
+// proxyPersonProfile streams a person's portrait from katalog-manager
+// (/api/artwork/person/{id}/profile), as proxyArtwork streams an item's
+// poster. It sits in the stream-token group with the posters, so a
+// profile_url in an <img src> authenticates with ?stream= (or ?token=),
+// which ProxyStream passes on with the query. Range, If-None-Match and the
+// upstream's status and headers (ETag, 304, 404) pass through.
+func proxyPersonProfile(kc *katalog.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		kc.ProxyStream(w, r, "/api/artwork/person/"+id+"/profile", bearerFrom(r))
+	}
+}

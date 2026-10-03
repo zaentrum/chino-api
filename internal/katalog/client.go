@@ -534,8 +534,9 @@ func (c *Client) PlayInfoDurationMs(ctx context.Context, bearer, itemID string) 
 }
 
 // ProxyStream forwards the named upstream path to the appropriate
-// service, copying Range + Authorization + query string and streaming
-// the response body verbatim. Routing is by path prefix because
+// service, copying Range + If-None-Match + Authorization + query string
+// and streaming the response (status, headers such as ETag, body)
+// verbatim. Routing is by path prefix because
 // chino-api stitches three upstreams behind one client today:
 //
 //	/api/play/...    → StreamBaseURL  (chino-stream)
@@ -574,8 +575,12 @@ func (c *Client) ProxyStream(w http.ResponseWriter, r *http.Request, upstreamPat
 	if bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
-	if rng := r.Header.Get("Range"); rng != "" {
-		req.Header.Set("Range", rng)
+	// Range for byte ranges; If-None-Match so a client revalidating what it
+	// cached (an artwork ETag) gets the upstream's 304, not the bytes again.
+	for _, h := range []string{"Range", "If-None-Match"} {
+		for _, v := range r.Header.Values(h) {
+			req.Header.Add(h, v)
+		}
 	}
 	resp, err := c.HTTPStream.Do(req)
 	if err != nil {

@@ -194,6 +194,8 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// flicker on the home grid every 5 minutes.
 			r.Get("/items/{id}/poster", proxyArtwork(kc, "poster"))
 			r.Get("/items/{id}/backdrop", proxyArtwork(kc, "backdrop"))
+			// A person's portrait — what a person's profile_url points at.
+			r.Get("/people/{id}/profile", proxyPersonProfile(kc))
 			// Legacy progressive-MP4 stream — kept for fallback and for
 			// /info codec/probe discovery. The HLS endpoints below are
 			// what chino-web uses for playback now.
