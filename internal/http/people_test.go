@@ -123,3 +123,32 @@ func TestPersonProfileIsProxiedWithThePostersAuth(t *testing.T) {
 		t.Errorf("%d upstream requests, want only the one portrait", n)
 	}
 }
+
+// GET /api/v1/people/{id} passes the person through with profile_url, the
+// cards with their roles, and the language asked for on to katalog-api; the
+// response varies on Accept-Language.
+func TestPersonComesThroughTheRouter(t *testing.T) {
+	kat := newFake(t, map[string]string{"/api/v1/people/p1": `{"id":"p1","name":"Ada Example","has_profile":true,
+		"biography":"Ada Example ist Schauspielerin.","biography_lang":"de",
+		"items":[{"id":"m1","type":"movie","title":"A Film","roles":["actor","director"]}]}`})
+	h := router(t, kat.URL, "http://katalog-manager.invalid", false)
+
+	w := do(h, "GET", "/api/v1/people/p1?lang=de", http.Header{"Accept-Language": {"de-CH"}})
+	if w.Code != http.StatusOK {
+		t.Fatalf("person: %d %s", w.Code, w.Body)
+	}
+	want := `{"id":"p1","name":"Ada Example","has_profile":true,"profile_url":"/api/v1/people/p1/profile",` +
+		`"biography":"Ada Example ist Schauspielerin.","biography_lang":"de","items":[{"id":"m1","type":"movie",` +
+		`"title":"A Film","poster_url":"/api/v1/items/m1/poster","backdrop_url":"/api/v1/items/m1/backdrop",` +
+		`"roles":["actor","director"]}]}` + "\n"
+	if w.Body.String() != want {
+		t.Errorf("person:\n got %s\nwant %s", w.Body, want)
+	}
+	if v := w.Header().Values("Vary"); len(v) != 1 || v[0] != "Accept-Language" {
+		t.Errorf("Vary %q, want Accept-Language", v)
+	}
+	r := kat.requests()[0]
+	if r.URL.Query().Get("lang") != "de" || r.Header.Get("Accept-Language") != "de-CH" {
+		t.Errorf("katalog-api got lang %q, Accept-Language %q", r.URL.Query().Get("lang"), r.Header.Get("Accept-Language"))
+	}
+}

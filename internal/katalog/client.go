@@ -93,6 +93,10 @@ type Item struct {
 	// has marked this item watched. Nil means unwatched. Lives on Item
 	// because chino-api enriches lists in-place before returning JSON.
 	WatchedAt *time.Time `json:"watched_at,omitempty"`
+
+	// Roles is set on a person's filmography only: the person's roles on
+	// this item, in katalog-api's credit order.
+	Roles []string `json:"roles,omitempty"`
 }
 
 // CastEntry is one credit, as katalog-api sends it. Role is an open
@@ -163,6 +167,9 @@ type upstreamItem struct {
 	Subtitles []Subtitle              `json:"subtitles,omitempty"`
 	Trailers  []Trailer               `json:"trailers,omitempty"`
 	Segments  *upstreamSegmentSummary `json:"segments,omitempty"`
+
+	// Populated only on GET /people/{id}'s filmography.
+	Roles []string `json:"roles,omitempty"`
 }
 
 type upstreamSegmentSummary struct {
@@ -191,6 +198,7 @@ func (u upstreamItem) toItem() Item {
 		Cast:          u.Cast,
 		Subtitles:     u.Subtitles,
 		Trailers:      u.Trailers,
+		Roles:         u.Roles,
 	}
 	if u.Segments != nil {
 		it.Segments = &SegSummary{

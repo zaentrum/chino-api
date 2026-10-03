@@ -36,10 +36,12 @@ func searchPeople(kc *katalog.Client) http.HandlerFunc {
 	}
 }
 
-// getPerson proxies a person + their filmography. The filmography items
-// are watched-stamped for the current user so the grid shows the watched
-// badge (poster URLs are already synthesised by the katalog client).
-// 404 when the person id doesn't exist.
+// getPerson proxies a person, their details and their filmography. The
+// filmography items are watched-stamped for the current user so the grid
+// shows the watched badge (poster URLs, and the person's profile_url, are
+// synthesised by the katalog client). ?lang= and Accept-Language go on to
+// katalog-api, which picks the biography's language from them. 404 when the
+// person id doesn't exist.
 func getPerson(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
@@ -49,7 +51,8 @@ func getPerson(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 				limit = n
 			}
 		}
-		pd, err := kc.GetPerson(r.Context(), bearerFrom(r), id, limit)
+		pd, err := kc.GetPerson(r.Context(), bearerFrom(r), id, limit,
+			r.URL.Query().Get("lang"), r.Header.Get("Accept-Language"))
 		if err != nil {
 			http.Error(w, "katalog: "+err.Error(), http.StatusBadGateway)
 			return
@@ -60,6 +63,8 @@ func getPerson(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 		}
 		userID, _ := auth.SubjectFromContext(r.Context())
 		stampWatchedSlice(r.Context(), st, userID, pd.Items)
+		// The biography's language follows the header when ?lang= is absent.
+		w.Header().Add("Vary", "Accept-Language")
 		writeJSON(w, http.StatusOK, pd)
 	}
 }
