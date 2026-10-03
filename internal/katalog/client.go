@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/zaentrum/chino-api/internal/redact"
 )
 
 type Client struct {
@@ -592,7 +594,9 @@ func (c *Client) ProxyStream(w http.ResponseWriter, r *http.Request, upstreamPat
 	}
 	resp, err := c.HTTPStream.Do(req)
 	if err != nil {
-		http.Error(w, "katalog upstream: "+err.Error(), http.StatusBadGateway)
+		// The error quotes the upstream URL, query (credentials) included;
+		// clients report error bodies in telemetry and bug reports.
+		http.Error(w, "katalog upstream: "+redact.Text(err.Error()), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()

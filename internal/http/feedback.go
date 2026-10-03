@@ -16,6 +16,7 @@ import (
 
 	"github.com/zaentrum/chino-api/internal/auth"
 	"github.com/zaentrum/chino-api/internal/openproject"
+	"github.com/zaentrum/chino-api/internal/redact"
 	"github.com/zaentrum/chino-api/internal/store"
 )
 
@@ -278,13 +279,15 @@ func readScreenshot(r *http.Request) ([]byte, string, error) {
 
 // feedbackSubject builds "[source][kind] <title or first description
 // line>", truncated to maxSubjectRunes so OpenProject's subject column
-// stays scannable.
+// stays scannable. Reports quote the URLs that failed, credentials
+// included, so the subject, the description and the recurrence comment all
+// go through redact.Text before they are filed.
 func feedbackSubject(rep *feedbackReport) string {
 	head := strings.TrimSpace(rep.Title)
 	if head == "" {
 		head = strings.TrimSpace(strings.SplitN(rep.Description, "\n", 2)[0])
 	}
-	s := "[" + rep.Source + "][" + rep.Kind + "] " + head
+	s := "[" + rep.Source + "][" + rep.Kind + "] " + redact.Text(head)
 	if utf8.RuneCountInString(s) > maxSubjectRunes {
 		runes := []rune(s)
 		s = string(runes[:maxSubjectRunes-1]) + "…"
@@ -322,7 +325,7 @@ func feedbackDescription(username string, rep *feedbackReport, hasScreenshot boo
 	if hasScreenshot {
 		b.WriteString("\nScreenshot attached.\n")
 	}
-	return b.String()
+	return redact.Text(b.String())
 }
 
 // recurredComment is the note appended to an existing ticket when its
@@ -334,7 +337,7 @@ func recurredComment(username string, rep *feedbackReport, count int) string {
 		fmt.Fprintf(&b, ", app version %s", v)
 	}
 	fmt.Fprintf(&b, ". Seen %d times total.", count)
-	return b.String()
+	return redact.Text(b.String())
 }
 
 // appVersionFrom digs the app version out of the free-form context map.

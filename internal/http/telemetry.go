@@ -10,6 +10,7 @@ import (
 
 	"github.com/zaentrum/chino-api/internal/auth"
 	"github.com/zaentrum/chino-api/internal/metrics"
+	"github.com/zaentrum/chino-api/internal/redact"
 )
 
 const maxTelemetryBody = 256 * 1024 // 256 KB per batch.
@@ -64,7 +65,9 @@ func postTelemetry(w http.ResponseWriter, r *http.Request) {
 		for k, v := range e.Payload {
 			line["p_"+k] = v
 		}
-		buf, _ := json.Marshal(line)
+		// Players report the URL that failed (p_url) and error texts that
+		// quote it, credentials included: redact every string.
+		buf, _ := json.Marshal(redact.Value(line))
 		log.Println(string(buf))
 	}
 	w.WriteHeader(http.StatusNoContent)

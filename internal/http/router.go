@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -28,7 +29,8 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
-	r.Use(middleware.Logger)
+	// middleware.Logger, with ?token= / ?stream= values blanked out.
+	r.Use(requestLogger(os.Stdout))
 	r.Use(middleware.Recoverer)
 	r.Use(metrics.Middleware)
 	// NB: middleware.Timeout is NOT applied at the top level — it would
