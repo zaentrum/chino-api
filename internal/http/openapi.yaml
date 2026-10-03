@@ -35,6 +35,109 @@ paths:
       responses:
         "200":
           description: OK
+  /v1/items/{id}:
+    get:
+      summary: An item with its genres, cast, subtitles, trailers and segments
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Item" }
+        "404":
+          description: No such item
+        "502":
+          description: The catalog failed
+  /v1/people:
+    get:
+      summary: Search people by name
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+          description: empty answers an empty list
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  people:
+                    type: array
+                    items: { $ref: "#/components/schemas/Person" }
+                  total: { type: integer }
+        "502":
+          description: The catalog failed
+  /v1/people/{id}:
+    get:
+      summary: A person, their details and their filmography
+      description: >
+        The filmography is one card per title, newest first, each with the
+        person's roles on it. The biography is in the language `lang` names,
+        else the first of Accept-Language's the catalog has, else English,
+        else any; the response varies on Accept-Language.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+        - in: query
+          name: lang
+          schema: { type: string }
+          description: biography language (a language tag; its primary subtag counts)
+        - in: header
+          name: Accept-Language
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PersonDetail" }
+        "404":
+          description: No such person
+        "502":
+          description: The catalog failed
+  /v1/people/{id}/profile:
+    get:
+      summary: A person's portrait (what profile_url points at)
+      description: >
+        Proxied from the catalog manager with the posters' auth: a bearer,
+        ?token= or ?stream= (a stream token), so an <img src> works. Range and
+        If-None-Match pass through; so do the upstream's status and headers
+        (ETag, 304, 404).
+      security: [{ bearerAuth: [] }, { streamToken: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The image
+          content:
+            image/*:
+              schema: { type: string, format: binary }
+        "304":
+          description: Not modified (If-None-Match matched the ETag)
+        "404":
+          description: The person has no portrait
   /v1/me/watchlists:
     get:
       summary: List the caller's named watchlists
@@ -305,6 +408,78 @@ paths:
           description: Feedback pipeline not configured (no OpenProject token)
 components:
   schemas:
+    Item:
+      type: object
+      description: The fields a detail page uses; others are omitted here.
+      properties:
+        id: { type: string }
+        type: { type: string }
+        title: { type: string }
+        year: { type: integer }
+        poster_url: { type: string }
+        backdrop_url: { type: string }
+        genres:
+          type: array
+          items: { type: string }
+        cast:
+          description: >
+            As the catalog orders and caps it: role by role (actor, creator,
+            director, writer, producer, composer, cinematographer, editor,
+            then any other role alphabetically), billing order within a role;
+            at most 20 actors and 10 people of every other role.
+          type: array
+          items: { $ref: "#/components/schemas/CastEntry" }
+        roles:
+          description: on a person's filmography only, the person's roles on the item
+          type: array
+          items: { type: string }
+        watched_at: { type: string, format: date-time }
+    CastEntry:
+      type: object
+      required: [name, role]
+      description: One credit; every optional field is omitted when unknown.
+      properties:
+        person_id: { type: string }
+        name: { type: string }
+        role:
+          type: string
+          description: open vocabulary; a client shows the roles it knows
+        job: { type: string, example: Screenplay }
+        character: { type: string }
+        order: { type: integer, minimum: 0, description: "billing order within the role, 0 first" }
+        episode_count: { type: integer }
+    Person:
+      type: object
+      required: [id, name, has_profile]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        credits: { type: integer, description: "search results: the number of titles" }
+        has_profile: { type: boolean }
+        profile_url:
+          type: string
+          description: set when has_profile; /api/v1/people/{id}/profile
+    PersonDetail:
+      allOf:
+        - $ref: "#/components/schemas/Person"
+        - type: object
+          description: Every optional field is omitted when unknown.
+          properties:
+            sort_name: { type: string }
+            also_known_as:
+              type: array
+              items: { type: string }
+            birth_date: { type: string, format: date }
+            death_date: { type: string, format: date }
+            birthplace: { type: string }
+            known_for_department: { type: string }
+            biography: { type: string }
+            biography_lang: { type: string, description: "a primary language subtag" }
+            tmdb_person_id: { type: string }
+            imdb_id: { type: string }
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/Item" }
     Watchlist:
       type: object
       properties:
@@ -318,3 +493,8 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    streamToken:
+      type: apiKey
+      in: query
+      name: stream
+      description: a stream token from POST /api/v1/me/stream-token

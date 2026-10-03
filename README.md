@@ -28,6 +28,10 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `GET /api/config` | none | client app config |
 | `GET /api/v1/me` | bearer JWT | echoes the caller's `sub` |
 | `GET /api/v1/items` | bearer JWT | catalog browse |
+| `GET /api/v1/items/{id}` | bearer JWT | item detail, cast and crew by role |
+| `GET /api/v1/people` | bearer JWT | people search by name |
+| `GET /api/v1/people/{id}` | bearer JWT | a person, their details and filmography |
+| `GET /api/v1/people/{id}/profile` | bearer JWT or stream token | a person's portrait (`profile_url`) |
 | `GET /api/v1/me/continue-watching` | bearer JWT | resume list |
 | `GET /api/v1/me/watchlists` | bearer JWT | named watchlists |
 | `GET/POST /api/v1/items/{id}/progress` | bearer JWT | playback progress |
