@@ -228,3 +228,31 @@ func TestSubtitleItem(t *testing.T) {
 		t.Errorf("asked %v, want each once", v.asked)
 	}
 }
+
+// An item's rating comes through as katalog-api sends it: its age (0 too)
+// and the certification it comes from, and nothing of a rating where
+// katalog-api sends none.
+func TestAnItemsRatingComesThrough(t *testing.T) {
+	up := newUpstream(t, map[string]string{
+		"/api/v1/items/m0":  `{"id":"m0","type":"movie","title":"For All","min_age":0,"certification":"0","certification_country":"DE"}`,
+		"/api/v1/items/m13": `{"id":"m13","type":"movie","title":"Teen","min_age":13,"certification":"PG-13","certification_country":"US"}`,
+		"/api/v1/items/mu":  `{"id":"mu","type":"movie","title":"Unrated"}`,
+		"/api/v1/movies":    `{"items":[{"id":"m13","type":"movie","title":"Teen","min_age":13,"certification":"PG-13","certification_country":"US"}]}`,
+	})
+	c := New(up.URL)
+	for id, want := range map[string]string{
+		"m0":  `{"id":"m0","type":"movie","title":"For All","min_age":0,"certification":"0","certification_country":"DE","poster_url":"/api/v1/items/m0/poster","backdrop_url":"/api/v1/items/m0/backdrop"}`,
+		"m13": `{"id":"m13","type":"movie","title":"Teen","min_age":13,"certification":"PG-13","certification_country":"US","poster_url":"/api/v1/items/m13/poster","backdrop_url":"/api/v1/items/m13/backdrop"}`,
+		"mu":  `{"id":"mu","type":"movie","title":"Unrated","poster_url":"/api/v1/items/mu/poster","backdrop_url":"/api/v1/items/mu/backdrop"}`,
+	} {
+		it, err := c.GetItem(context.Background(), "tok", id)
+		if err != nil || it == nil {
+			t.Fatalf("%s: %v %v", id, it, err)
+		}
+		sameJSON(t, id, it, want)
+	}
+	list, err := c.ListMovies(context.Background(), "tok", "", 10)
+	if err != nil || len(list) != 1 || list[0].MinAge == nil || *list[0].MinAge != 13 || list[0].Certification != "PG-13" {
+		t.Errorf("a list's item: %+v %v", list, err)
+	}
+}

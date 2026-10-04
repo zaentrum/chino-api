@@ -89,6 +89,17 @@ type Item struct {
 	EpisodeNumber *int   `json:"episode_number,omitempty"`
 	ParentID      string `json:"parent_id,omitempty"`
 
+	// MinAge is the age a viewer must be to be served the title (an admin's
+	// rating, else an episode's series', else its certification's); nil
+	// when nothing rates it, and a pointer so 0 survives the round-trip.
+	// Certification and CertificationCountry are the certification the age
+	// comes from as TMDB gives it ("12" in "DE", "PG-13" in "US"), empty
+	// when an admin rated the title or nothing did. As katalog-api sends
+	// them.
+	MinAge               *int   `json:"min_age,omitempty"`
+	Certification        string `json:"certification,omitempty"`
+	CertificationCountry string `json:"certification_country,omitempty"`
+
 	// Optional rich associations populated by GetItemDetail.
 	Genres    []string    `json:"genres,omitempty"`
 	Cast      []CastEntry `json:"cast,omitempty"`
@@ -168,6 +179,10 @@ type upstreamItem struct {
 	EpisodeNumber *int    `json:"episode_number"`
 	ParentID      string  `json:"parent_id"`
 
+	MinAge               *int   `json:"min_age"`
+	Certification        string `json:"certification"`
+	CertificationCountry string `json:"certification_country"`
+
 	// Populated only by GET /items/{id}?include=…; absent on list responses.
 	Genres    []string                `json:"genres,omitempty"`
 	Cast      []CastEntry             `json:"cast,omitempty"`
@@ -199,6 +214,7 @@ func (u upstreamItem) toItem() Item {
 		SeasonNumber:  u.SeasonNumber,
 		EpisodeNumber: u.EpisodeNumber,
 		ParentID:      u.ParentID,
+		MinAge:        u.MinAge,
 		PosterURL:     "/api/v1/items/" + u.ID + "/poster",
 		BackdropURL:   "/api/v1/items/" + u.ID + "/backdrop",
 		Genres:        u.Genres,
@@ -206,6 +222,9 @@ func (u upstreamItem) toItem() Item {
 		Subtitles:     u.Subtitles,
 		Trailers:      u.Trailers,
 		Roles:         u.Roles,
+
+		Certification:        u.Certification,
+		CertificationCountry: u.CertificationCountry,
 	}
 	if u.Segments != nil {
 		it.Segments = &SegSummary{
