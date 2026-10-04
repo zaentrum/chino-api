@@ -27,6 +27,7 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `GET /api/openapi.yaml` | none | OpenAPI 3 spec |
 | `GET /api/config` | none | client app config |
 | `GET /api/v1/me` | bearer JWT | echoes the caller's `sub` |
+| `DELETE /api/v1/me` | bearer JWT (in the header) | deletes the signed-in person's data and their account ([below](#deleting-an-account)) |
 | `GET /api/v1/items` | bearer JWT | catalog browse |
 | `GET /api/v1/items/{id}` | bearer JWT | item detail, cast and crew by role |
 | `GET /api/v1/people` | bearer JWT | people search by name |
@@ -40,6 +41,7 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `POST /api/v1/feedback` | bearer JWT | bug report → OpenProject (503 when unconfigured) |
 | `POST /api/v1/admin/items/{id}/package` | bearer JWT with the admin role | an item's packaging, forwarded to katalog-manager with the bearer |
 | `GET /api/v1/admin/items/{id}/package` | bearer JWT with the admin role | the item's processing steps, from katalog-manager |
+| `DELETE /api/v1/admin/accounts/{sub}/data` | bearer JWT with the admin role and the account deletion token | what chino keeps of an account an admin deletes on the portal's People page, for portal-api |
 | `GET /api/v1/items/{id}/play/info` | bearer JWT or stream token | how the item plays for the client's `caps`; a packaged title's `qualities` |
 | `GET /api/v1/items/{id}/play/master.m3u8` | bearer JWT or stream token | the HLS master for the client's `caps` and `q` |
 | `POST /api/v1/items/{id}/play/prewarm` | bearer JWT or stream token | warm the variant the client starts on |
@@ -74,6 +76,38 @@ them, for a badge.
 The tests of chino-api's own lists need a PostgreSQL in which they may create
 and drop schemas, named by `CHINO_API_TEST_DATABASE_URL`, and are skipped
 without it.
+
+### Deleting an account
+
+A person deletes their own account from the app — the app stores ask every
+app that makes accounts to offer it — with `DELETE /api/v1/me` and their
+bearer, in the `Authorization` header (a `?token=` bearer is refused: a link
+someone could be sent). chino-api deletes what it keeps of them — playback
+progress, watch history, named watchlists and their items, likes, the legacy
+watchlist rows — and asks portal-api, with the person's bearer and the
+account deletion token (`ACCOUNT_DELETION_TOKEN`, sent as
+`X-Account-Deletion-Token`), to delete their account in the platform's realm
+(`DELETE /api/portal/me`). The rows are deleted in a transaction committed
+only once portal-api has deleted the account, or found it gone already:
+
+| Answer | When | Deleted |
+|---|---|---|
+| `200 {"account":"deleted","deleted":{…}}` | portal-api deleted the account | the data and the account; `deleted` counts the rows |
+| `200 {"account":"gone",…}` | the account was gone already | the data |
+| `409 {"error":"refused","message":…}` | portal-api refuses: the last admin, an administrator of Keycloak itself | nothing; `message` says why, for the person |
+| `502 {"error":"account_not_deleted",…}` | portal-api did not answer, or refused the token | nothing: asking again starts over |
+| `501 {"error":"account_deletion_unavailable",…}` | no token: accounts here live in an identity provider the platform does not manage | nothing |
+
+The other direction: an admin deleting someone on the portal's People page has
+portal-api ask for that person's data first, with the admin's bearer and the
+same token: `DELETE /api/v1/admin/accounts/{sub}/data`. Bug reports already
+sent to OpenProject are not deleted with an account, and the request log keeps
+no bearer (it shows `REDACTED`).
+
+A client offers it as **Delete Account**, asks first and says what goes
+(their history, lists and progress, and their account), sends the request with
+its bearer, and signs out on `200`; on `409` it shows `message`, on `501` that
+accounts are deleted by whoever runs the server.
 
 ### Playback
 
@@ -130,6 +164,8 @@ Configured entirely through environment variables (see `internal/config`):
 | `ADMIN_SUBJECTS` | deprecated: comma-separated OIDC `sub` values let through `/api/v1/admin/*` besides the role; empty by default, and it goes in a coming release |
 | `OPENPROJECT_URL` / `OPENPROJECT_TOKEN` / `OPENPROJECT_PROJECT_ID` / `OPENPROJECT_BUG_TYPE_ID` | feedback pipeline (optional) |
 | `STREAM_SIGNING_KEY` | shared HMAC secret for signed `?stream=` URLs (optional) |
+| `ACCOUNT_DELETION_TOKEN` | the token chino-api and portal-api delete an account with (Secret `zaentrum-people`, key `deletion-token`, on the platform); empty: `DELETE /api/v1/me` answers 501 |
+| `PORTAL_BASE_URL` | portal-api, for addon slots and account deletion (default `http://portal-api`) |
 
 ## Layout
 

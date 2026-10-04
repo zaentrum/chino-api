@@ -42,6 +42,53 @@ paths:
           description: OK
         "401":
           description: Unauthorized
+    delete:
+      summary: Delete the signed-in person's data and their account
+      description: >-
+        Deletes what chino-api keeps of the person (playback progress, watch
+        history, named watchlists and their items, likes) and asks
+        portal-api, with the person's bearer and the account deletion token,
+        to delete their account (DELETE /api/portal/me). The rows are deleted
+        in a transaction committed only once the account is deleted or gone
+        already; when portal-api refuses or does not answer, nothing is
+        deleted. The bearer goes in the Authorization header: a stream token
+        is not taken, and a bearer in ?token= is refused.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The data deleted, and the account deleted (account deleted) or found gone already (account gone)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  account: { type: string, enum: [deleted, gone] }
+                  deleted: { $ref: "#/components/schemas/DeletedData" }
+        "400":
+          description: The bearer was sent in the URL (?token=)
+        "401":
+          description: No bearer, or one that is not valid
+        "409":
+          description: >-
+            portal-api refuses: the person is the last admin, or an
+            administrator of Keycloak itself. Nothing is deleted; message
+            says why, for the person.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountRefusal" }
+        "501":
+          description: >-
+            Account deletion is not set up (no ACCOUNT_DELETION_TOKEN):
+            accounts live in an identity provider the platform does not
+            manage. Nothing is deleted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountRefusal" }
+        "502":
+          description: portal-api did not delete the account; nothing is deleted, and asking again starts over
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountRefusal" }
   /v1/items:
     get:
       summary: List items for this product (stub during beta)
@@ -650,8 +697,48 @@ paths:
           description: katalog-manager did not answer
         "503":
           description: No katalog-manager configured (KATALOG_MANAGER_URL)
+  /v1/admin/accounts/{sub}/data:
+    delete:
+      summary: Delete what chino keeps of an account an admin deletes (for portal-api)
+      description: >-
+        portal-api calls it when an admin deletes someone on the People page,
+        before it deletes their account: the admin's bearer, carrying the
+        admin role, and the account deletion token. Deleting an account
+        chino keeps nothing of is no error.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: sub
+          required: true
+          description: The account's subject (its id in the platform's realm)
+          schema: { type: string }
+        - $ref: "#/components/parameters/DeletionToken"
+      responses:
+        "200":
+          description: The account's data, deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { $ref: "#/components/schemas/DeletedData" }
+        "401":
+          description: No bearer, or one that is not valid
+        "403":
+          description: The bearer does not carry the admin role, or the deletion token is missing or wrong
+        "501":
+          description: Account deletion is not set up (no ACCOUNT_DELETION_TOKEN)
 components:
   parameters:
+    DeletionToken:
+      in: header
+      name: X-Account-Deletion-Token
+      required: true
+      description: >-
+        The account deletion token chino-api and portal-api share
+        (ACCOUNT_DELETION_TOKEN): the call comes from the service that
+        deletes the account, and from no client.
+      schema: { type: string }
     ItemID:
       in: path
       name: id
@@ -684,6 +771,21 @@ components:
       description: Seconds into the title the client starts at; what is warmed from.
       schema: { type: number, minimum: 0 }
   schemas:
+    DeletedData:
+      type: object
+      description: How many rows of each kind were deleted.
+      properties:
+        progress: { type: integer }
+        watched: { type: integer }
+        watchlists: { type: integer }
+        watchlistItems: { type: integer }
+        likes: { type: integer }
+        legacyWatchlist: { type: integer }
+    AccountRefusal:
+      type: object
+      properties:
+        error: { type: string, enum: [refused, account_not_deleted, account_deletion_unavailable, data_not_deleted, bearer_in_url] }
+        message: { type: string, description: For the person }
     PlayInfo:
       type: object
       description: Every field but mode is omitted or null where it does not apply.
