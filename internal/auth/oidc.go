@@ -16,6 +16,7 @@ type ctxKey int
 const (
 	subjectKey ctxKey = iota
 	rolesKey
+	ratingKey
 )
 
 type Verifier struct {
@@ -81,8 +82,11 @@ func (v *Verifier) middleware(next http.Handler, allowStream bool) http.Handler 
 		// query param that survives OIDC silent-renew.
 		if allowStream && v.signer != nil {
 			if s := r.URL.Query().Get("stream"); s != "" {
-				if uid, err := v.signer.Verify(s); err == nil {
+				if uid, maxRating, err := v.signer.VerifyCapped(s); err == nil {
 					ctx := context.WithValue(r.Context(), subjectKey, uid)
+					if maxRating != nil {
+						ctx = WithMaxRating(ctx, *maxRating)
+					}
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}
@@ -119,6 +123,9 @@ func (v *Verifier) middleware(next http.Handler, allowStream bool) http.Handler 
 		}
 		ctx := context.WithValue(r.Context(), subjectKey, tok.Subject)
 		ctx = context.WithValue(ctx, rolesKey, realmRoles(tok))
+		if age, capped := maxRatingOf(tok); capped {
+			ctx = WithMaxRating(ctx, age)
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

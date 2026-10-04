@@ -30,7 +30,12 @@ func postStreamToken(signer *auth.Signer) http.HandlerFunc {
 			http.Error(w, "no subject", http.StatusUnauthorized)
 			return
 		}
+		// A capped viewer's token carries its cap, so the media routes hold
+		// the viewer to it as the bearer routes do.
 		token, exp := signer.Mint(userID, streamTokenTTL)
+		if age, capped := auth.MaxRatingFromContext(r.Context()); capped {
+			token, exp = signer.MintCapped(userID, age, streamTokenTTL)
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"stream_token": token,
 			"expires_at":   exp.UTC().Format(time.RFC3339),

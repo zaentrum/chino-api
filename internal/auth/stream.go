@@ -61,6 +61,21 @@ func NewSigner(keyB64 string) (*Signer, error) {
 
 // Mint returns a signed token for userID valid until exp.
 func (s *Signer) Mint(userID string, ttl time.Duration) (token string, exp time.Time) {
+	return s.mint(userID, ttl)
+}
+
+// MintCapped returns a signed token for userID, a viewer capped at maxRating
+// (the max_rating claim of its access token), valid until exp: the cap rides
+// in the token's user part, "<userID>;max_rating=<age>", signed with the rest,
+// so a request the token authorizes holds its viewer to the cap.
+func (s *Signer) MintCapped(userID string, maxRating int, ttl time.Duration) (token string, exp time.Time) {
+	if maxRating < 0 {
+		maxRating = 0
+	}
+	return s.mint(userID+streamCapMark+strconv.Itoa(maxRating), ttl)
+}
+
+func (s *Signer) mint(userID string, ttl time.Duration) (token string, exp time.Time) {
 	exp = time.Now().Add(ttl)
 	payload := base64.RawURLEncoding.EncodeToString(
 		[]byte(userID + "|" + strconv.FormatInt(exp.Unix(), 10)))
@@ -71,9 +86,26 @@ func (s *Signer) Mint(userID string, ttl time.Duration) (token string, exp time.
 }
 
 // Verify checks the token's signature and expiry, returning the
-// embedded userID. Constant-time signature comparison protects against
-// timing oracles.
+// embedded userID, without the cap a capped viewer's token carries.
+// Constant-time signature comparison protects against timing oracles.
 func (s *Signer) Verify(token string) (userID string, err error) {
+	userID, _, err = s.VerifyCapped(token)
+	return userID, err
+}
+
+// VerifyCapped is Verify with the rating cap the token carries: the age of a
+// token MintCapped minted, nil for one Mint minted (an uncapped viewer's, and
+// every token older than the caps).
+func (s *Signer) VerifyCapped(token string) (userID string, maxRating *int, err error) {
+	userID, err = s.verify(token)
+	if err != nil {
+		return "", nil, err
+	}
+	userID, maxRating = splitCap(userID)
+	return userID, maxRating, nil
+}
+
+func (s *Signer) verify(token string) (userID string, err error) {
 	dot := strings.IndexByte(token, '.')
 	if dot < 1 || dot == len(token)-1 {
 		return "", errors.New("malformed stream token")
