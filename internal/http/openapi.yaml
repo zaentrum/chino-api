@@ -356,6 +356,171 @@ paths:
       responses:
         "204":
           description: Removed (or already absent)
+  /v1/items/{id}/play/info:
+    get:
+      summary: How the item plays for this client, and the qualities it may pick
+      description: >
+        Proxied from chino-stream. For a packaged title (mode "packaged")
+        the video fields are the rung the client starts on, qualities lists
+        Auto and the packaged rungs it may pick (null when there are fewer
+        than two), and default_quality is "auto". Send the caps the master
+        request sends. For an on-the-fly title (mode transcode / remux /
+        passthrough) qualities is high/medium/low (transcode only) or null.
+      security: [{ bearerAuth: [] }, { streamToken: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+        - $ref: "#/components/parameters/Caps"
+        - $ref: "#/components/parameters/Quality"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlayInfo" }
+        "404":
+          description: No playback asset for the item
+  /v1/items/{id}/play/master.m3u8:
+    get:
+      summary: The HLS master the client plays
+      description: >
+        A packaged title's master as this client is served it: one codec
+        family (the HEVC rungs when it decodes HEVC and one fits its HEVC
+        height cap, else the H.264 rungs), no rung over its cap for that
+        codec, the audio groups it decodes (stereo AAC always, the E-AC-3
+        5.1 group only with eac3, an AC-3 one only with ac3), the SUBTITLES
+        group when the package has one, exactly one DEFAULT=YES per audio
+        group. q=<rung id> serves that rung alone. A package with one video
+        rendition and one audio group is served as packaged. Without a
+        package, or for a client that decodes none of its rungs, the
+        on-the-fly master (q=high|medium|low). Every URI in it carries the
+        request's query, so the stream token authorises each fetch.
+        Fetching it warms the variant the client starts on (with t, from
+        there).
+      security: [{ bearerAuth: [] }, { streamToken: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+        - $ref: "#/components/parameters/Caps"
+        - $ref: "#/components/parameters/Quality"
+        - $ref: "#/components/parameters/StartSeconds"
+      responses:
+        "200":
+          description: The master playlist
+          content:
+            application/vnd.apple.mpegurl:
+              schema: { type: string }
+        "404":
+          description: No playback asset for the item
+  /v1/items/{id}/play/prewarm:
+    post:
+      summary: Warm the start of a title before it plays
+      description: >
+        Answers at once; the warm runs in the background. A packaged title
+        warms the variant the client will start on for its caps and q
+        (playlist, init and the segments from t, else the first ones); an
+        on-the-fly one its first window.
+      security: [{ bearerAuth: [] }, { streamToken: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+        - $ref: "#/components/parameters/Caps"
+        - $ref: "#/components/parameters/Quality"
+        - $ref: "#/components/parameters/StartSeconds"
+      responses:
+        "202":
+          description: Warming ("packaged-warming" or "warming")
+  /v1/items/{id}/play/{rendition}/playlist.m3u8:
+    get:
+      summary: A packaged rendition's media playlist
+      description: vN video, aN audio, sN WebVTT subtitles (the URIs a master names).
+      security: [{ bearerAuth: [] }, { streamToken: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+        - in: path
+          name: rendition
+          required: true
+          schema: { type: string, pattern: "^[vas][0-9]+$" }
+      responses:
+        "200":
+          description: The media playlist; its URIs carry the request's query
+          content:
+            application/vnd.apple.mpegurl:
+              schema: { type: string }
+        "404":
+          description: No such rendition
+  /v1/items/{id}/play/{rendition}/init.mp4:
+    get:
+      summary: A packaged video or audio rendition's init segment
+      security: [{ bearerAuth: [] }, { streamToken: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+        - in: path
+          name: rendition
+          required: true
+          schema: { type: string, pattern: "^[va][0-9]+$" }
+      responses:
+        "200":
+          description: init.mp4
+          content:
+            video/mp4:
+              schema: { type: string, format: binary }
+  /v1/items/{id}/play/{rendition}/seg-{n}.m4s:
+    get:
+      summary: A packaged video or audio media segment (ranges accepted)
+      security: [{ bearerAuth: [] }, { streamToken: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+        - in: path
+          name: rendition
+          required: true
+          schema: { type: string, pattern: "^[va][0-9]+$" }
+        - in: path
+          name: n
+          required: true
+          schema: { type: string, pattern: "^[0-9]+$", example: "00001" }
+      responses:
+        "200":
+          description: The segment
+          content:
+            video/iso.segment:
+              schema: { type: string, format: binary }
+  /v1/items/{id}/play/{rendition}/seg-{n}.vtt:
+    get:
+      summary: A packaged WebVTT subtitle segment (ranges accepted)
+      description: >
+        Of an sN rendition, what a master's TYPE=SUBTITLES group points at
+        (the packager's HLS_SUBTITLES).
+      security: [{ bearerAuth: [] }, { streamToken: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+        - in: path
+          name: rendition
+          required: true
+          schema: { type: string, pattern: "^s[0-9]+$" }
+        - in: path
+          name: n
+          required: true
+          schema: { type: string, pattern: "^[0-9]+$", example: "00001" }
+      responses:
+        "200":
+          description: The segment
+          content:
+            text/vtt:
+              schema: { type: string }
+  /v1/items/{id}/play/{rendition}/iframes.m3u8:
+    get:
+      summary: A packaged video rung's I-frame playlist (trick play)
+      security: [{ bearerAuth: [] }, { streamToken: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+        - in: path
+          name: rendition
+          required: true
+          schema: { type: string, pattern: "^v[0-9]+$" }
+      responses:
+        "200":
+          description: The I-frame playlist
+          content:
+            application/vnd.apple.mpegurl:
+              schema: { type: string }
   /v1/feedback:
     post:
       summary: Submit a bug / feedback report (becomes an OpenProject ticket)
@@ -408,7 +573,82 @@ paths:
         "503":
           description: Feedback pipeline not configured (no OpenProject token)
 components:
+  parameters:
+    ItemID:
+      in: path
+      name: id
+      required: true
+      schema: { type: string }
+    Caps:
+      in: query
+      name: caps
+      description: >
+        What the client decodes, comma-separated: video avc, hvc, av1, vp9,
+        each with an optional ":<height>" (the hardware decoder's tallest
+        frame, e.g. hvc:1080); audio aac, mp3, opus, vorbis, ac3, eac3;
+        aacmc for AAC beyond two channels. Without it: H.264, VP9, AV1,
+        AAC, MP3, Opus, Vorbis — no HEVC.
+      schema: { type: string, example: "avc:2160,hvc:2160,aac,eac3" }
+    Quality:
+      in: query
+      name: q
+      description: >
+        auto (default) or the name of an entry of /play/info's qualities.
+        On an on-the-fly title high, medium or low; on a packaged title
+        those mean auto.
+      schema: { type: string, example: "v1" }
+    StartSeconds:
+      in: query
+      name: t
+      description: Seconds into the title the client starts at; what is warmed from.
+      schema: { type: number, minimum: 0 }
   schemas:
+    PlayInfo:
+      type: object
+      description: Every field but mode is omitted or null where it does not apply.
+      properties:
+        mode: { type: string, enum: [packaged, transcode, remux, passthrough] }
+        reason: { type: string }
+        filename: { type: string }
+        container: { type: string }
+        video_codec:
+          type: string
+          description: packaged — the CODECS entry of the rung the client starts on
+        audio_codec: { type: string }
+        width: { type: integer }
+        height: { type: integer }
+        duration_ms: { type: integer }
+        encoder: { type: string, description: "on the fly: libx264 or h264_nvenc" }
+        qualities:
+          type: array
+          nullable: true
+          description: >
+            packaged: Auto first, then one entry per picture size the client
+            decodes at its heights, tallest first (null when fewer than two
+            rungs to pick from); transcode: high, medium, low. A menu shows
+            them by label and reloads the master with q=<name>.
+          items: { $ref: "#/components/schemas/PlayQuality" }
+        default_quality: { type: string, description: "packaged: auto; transcode: high" }
+        audio_tracks:
+          type: array
+          description: packaged — the stereo tracks
+          items: { type: object }
+        subtitle_tracks:
+          type: array
+          description: packaged — the sidecars, a WebVTT one with its HLS rendition dir (hls)
+          items: { type: object }
+    PlayQuality:
+      type: object
+      required: [name, label]
+      properties:
+        name: { type: string, description: "the q value: auto, a rung id (v1) or high/medium/low", example: v1 }
+        label: { type: string, example: 720p }
+        id: { type: string, description: "packaged rungs: the rung id", example: v1 }
+        width: { type: integer, example: 1280 }
+        height: { type: integer, example: 720 }
+        codec: { type: string, example: avc1.64001f }
+        bitrate: { type: integer, description: "bit/s, the variant's BANDWIDTH", example: 1505267 }
+        video_range: { type: string, enum: [SDR, PQ, HLG] }
     Item:
       type: object
       description: The fields a detail page uses; others are omitted here.

@@ -38,6 +38,23 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `POST /api/v1/play/events` | bearer JWT or stream token | playback telemetry (the stream token for `sendBeacon`) |
 | `GET /api/v1/events` | bearer JWT or stream token | live catalog notifications (SSE) |
 | `POST /api/v1/feedback` | bearer JWT | bug report → OpenProject (503 when unconfigured) |
+| `GET /api/v1/items/{id}/play/info` | bearer JWT or stream token | how the item plays for the client's `caps`; a packaged title's `qualities` |
+| `GET /api/v1/items/{id}/play/master.m3u8` | bearer JWT or stream token | the HLS master for the client's `caps` and `q` |
+| `POST /api/v1/items/{id}/play/prewarm` | bearer JWT or stream token | warm the variant the client starts on |
+| `GET /api/v1/items/{id}/play/{vN\|aN\|sN}/playlist.m3u8` | bearer JWT or stream token | packaged video / audio / WebVTT rendition, its segments next to it |
+
+### Playback
+
+The play routes proxy chino-stream, query and all: the stream token, `caps`
+(what the client decodes, e.g. `avc:2160,hvc:2160,aac,eac3`) and `q` ride on
+to every playlist and segment. For a packaged title chino-stream serves each
+client one codec family (HEVC when it decodes it, else H.264) at the heights
+its decoder takes, the audio groups it decodes and the subtitle group the
+package has; `q=<name>` from `/play/info`'s `qualities` serves one rung, `auto`
+(the default) the ladder. The rules and the `/play/info` shape are in
+chino-stream's README and in the spec (`PlayInfo`, `PlayQuality`). A quality
+menu shows `qualities` when it has two or more entries, by `label`, and
+reloads the master with `q=<name>`.
 
 ## Local development
 
