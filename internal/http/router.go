@@ -76,6 +76,11 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 		op = openproject.New(cfg.OpenProjectURL, cfg.OpenProjectToken, cfg.OpenProjectProjectID, cfg.OpenProjectBugTypeID)
 	}
 
+	// Every route of one title holds a capped viewer to its cap: a title the
+	// cap does not allow is 404 there, as one there is not (ratings.go).
+	g := gate{kc: kc}
+	title, item := g.title("id"), g.title("itemId")
+
 	r.Route("/api/v1", func(r chi.Router) {
 		// Default group: OIDC bearer (header or the deprecated ?token=).
 		// Stream tokens are NOT accepted here — they're scoped to the
@@ -93,21 +98,21 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// kill the in-flight ffmpeg transcode by rotating the URL.
 			r.Post("/me/stream-token", postStreamToken(signer))
 			r.Get("/items", listItems(st, kc))
-			r.Get("/items/{id}", itemDetail(st, kc))
-			r.Post("/me/items/{id}/watched", postWatched(st))
-			r.Delete("/me/items/{id}/watched", deleteWatched(st))
+			r.With(title).Get("/items/{id}", itemDetail(st, kc))
+			r.With(title).Post("/me/items/{id}/watched", postWatched(st))
+			r.With(title).Delete("/me/items/{id}/watched", deleteWatched(st))
 			r.Get("/me/watched", listWatched(st, kc))
-			r.Get("/items/{id}/segments", itemSegments(kc, streamKC))
-			r.Get("/items/{id}/similar", similarItems(st, kc))
+			r.With(title).Get("/items/{id}/segments", itemSegments(kc, streamKC))
+			r.With(title).Get("/items/{id}/similar", similarItems(st, kc))
 			// People search + filmography (search an actor → see their
 			// films). Proxies katalog-api; the filmography items get the
 			// same poster + watched_at enrichment as the browse lists.
 			r.Get("/people", searchPeople(kc))
 			r.Get("/people/{id}", getPerson(st, kc))
-			r.Get("/series/{id}/episodes", seriesEpisodes(kc, st))
-			r.Get("/series/{id}/next-episode", nextEpisode(kc, st))
+			r.With(title).Get("/series/{id}/episodes", seriesEpisodes(kc, st))
+			r.With(title).Get("/series/{id}/next-episode", nextEpisode(kc, st))
 			r.Get("/genres", listGenres(kc))
-			r.Get("/items/{id}/subtitles", subtitlesList(kc))
+			r.With(title).Get("/items/{id}/subtitles", subtitlesList(kc))
 
 			// Addon UI-extension slots: the SPA asks for the contributions
 			// for a named slot (e.g. search.empty) and renders them natively.
@@ -118,8 +123,8 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// Resume position: GET returns the last saved second; POST writes
 			// it. The player calls POST every ~10s while watching and GET
 			// once on mount to decide whether to offer "Resume from X:YZ?".
-			r.Get("/items/{id}/progress", getProgress(st))
-			r.Post("/items/{id}/progress", postProgress(st))
+			r.With(title).Get("/items/{id}/progress", getProgress(st))
+			r.With(title).Post("/items/{id}/progress", postProgress(st))
 
 			// Named watchlists — the user can keep several lists, each a
 			// grid of items, with exactly one default named "Watchlist".
@@ -133,22 +138,22 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			r.Get("/me/watchlists/{listId}", getWatchlist(st))
 			r.Patch("/me/watchlists/{listId}", renameWatchlist(st))
 			r.Delete("/me/watchlists/{listId}", deleteWatchlist(st))
-			r.Put("/me/watchlists/{listId}/items/{itemId}", setWatchlistItem(st, true))
-			r.Delete("/me/watchlists/{listId}/items/{itemId}", setWatchlistItem(st, false))
+			r.With(item).Put("/me/watchlists/{listId}/items/{itemId}", setWatchlistItem(st, true))
+			r.With(item).Delete("/me/watchlists/{listId}/items/{itemId}", setWatchlistItem(st, false))
 
 			// Back-compat watchlist routes — UNCHANGED response shapes for
 			// already-installed mobile/TV builds, but now backed by the
 			// user's default list (resolved/created via EnsureDefaultList)
 			// instead of the legacy single watchlist flag table.
 			r.Get("/me/watchlist", defaultListGet(st))
-			r.Put("/me/watchlist/{id}", defaultListSet(st, true))
-			r.Delete("/me/watchlist/{id}", defaultListSet(st, false))
+			r.With(title).Put("/me/watchlist/{id}", defaultListSet(st, true))
+			r.With(title).Delete("/me/watchlist/{id}", defaultListSet(st, false))
 
 			// Likes stay on the simple per-user flag table — unchanged.
 			likesSpec := flagSpec{table: store.LikesTable, field: "liked"}
 			r.Get("/me/likes", flagList(st, likesSpec))
-			r.Put("/me/likes/{id}", flagSet(st, likesSpec, true))
-			r.Delete("/me/likes/{id}", flagSet(st, likesSpec, false))
+			r.With(title).Put("/me/likes/{id}", flagSet(st, likesSpec, true))
+			r.With(title).Delete("/me/likes/{id}", flagSet(st, likesSpec, false))
 
 			// Bug-report intake. Multipart (report JSON + optional
 			// screenshot) → OpenProject Bug work package, with
@@ -164,8 +169,8 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// check is in the handlers, so the rest of the chain needs no
 			// role-aware auth.
 			admin := newAdminAccess(cfg.AdminRole, cfg.AdminSubjects)
-			r.Post("/admin/items/{id}/package", postPackageRequest(admin, cfg.KatalogManagerURL))
-			r.Get("/admin/items/{id}/package", getPackageStatus(admin, cfg.KatalogManagerURL))
+			r.With(title).Post("/admin/items/{id}/package", postPackageRequest(admin, cfg.KatalogManagerURL))
+			r.With(title).Get("/admin/items/{id}/package", getPackageStatus(admin, cfg.KatalogManagerURL))
 		})
 
 		// Live catalog stream (SSE), in its OWN group — the default
@@ -205,25 +210,25 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// token in the URL, every renewal rotated the URL and the
 			// browser fetched every poster + backdrop again — noisy
 			// flicker on the home grid every 5 minutes.
-			r.Get("/items/{id}/poster", proxyArtwork(kc, "poster"))
-			r.Get("/items/{id}/backdrop", proxyArtwork(kc, "backdrop"))
+			r.With(title).Get("/items/{id}/poster", proxyArtwork(kc, "poster"))
+			r.With(title).Get("/items/{id}/backdrop", proxyArtwork(kc, "backdrop"))
 			// A person's portrait — what a person's profile_url points at.
 			r.Get("/people/{id}/profile", proxyPersonProfile(kc))
 			// Legacy progressive-MP4 stream — kept for fallback and for
 			// /info codec/probe discovery. The HLS endpoints below are
 			// what chino-web uses for playback now.
-			r.Get("/items/{id}/play", proxyPlay(streamKC))
-			r.Get("/items/{id}/play/info", proxyPlayInfo(streamKC))
+			r.With(title).Get("/items/{id}/play", proxyPlay(streamKC))
+			r.With(title).Get("/items/{id}/play/info", proxyPlayInfo(streamKC))
 			// HLS pipeline: master playlist, per-quality media playlist,
 			// init segment, on-demand media segments. The proxy
 			// preserves query strings (?stream=...) so the same stream
 			// token authorises every segment request without rewriting
 			// URLs on each level.
-			r.Get("/items/{id}/play/master.m3u8", proxyHLS(streamKC, "master.m3u8"))
+			r.With(title).Get("/items/{id}/play/master.m3u8", proxyHLS(streamKC, "master.m3u8"))
 			// Zap pager fires this for distance=1 cards. chino-stream
 			// returns 202 immediately and warms window 0 in a
 			// background goroutine off a dedicated ffmpeg pool.
-			r.Post("/items/{id}/play/prewarm", proxyHLS(streamKC, "prewarm"))
+			r.With(title).Post("/items/{id}/play/prewarm", proxyHLS(streamKC, "prewarm"))
 			// Listing of items that already have a finished CMAF
 			// package on disk. Used by the Zap pager to filter its
 			// candidate pool to instant-start items (packaged items
@@ -235,43 +240,43 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// chino-web's useZapFeed consumes the head of the pool
 			// instead of building a cold candidate set per session.
 			r.Get("/play/zap-feed", proxyZapFeed(streamKC))
-			r.Get("/items/{id}/play/{quality}/index.m3u8", proxyHLSQ(streamKC, "index.m3u8"))
-			r.Get("/items/{id}/play/{quality}/init.mp4", proxyHLSQ(streamKC, "init.mp4"))
-			r.Get("/items/{id}/play/{quality}/{seg:[0-9]+}.m4s", proxyHLSSegment(streamKC))
+			r.With(title).Get("/items/{id}/play/{quality}/index.m3u8", proxyHLSQ(streamKC, "index.m3u8"))
+			r.With(title).Get("/items/{id}/play/{quality}/init.mp4", proxyHLSQ(streamKC, "init.mp4"))
+			r.With(title).Get("/items/{id}/play/{quality}/{seg:[0-9]+}.m4s", proxyHLSSegment(streamKC))
 			// Audio rendition group (multi-language audio).
-			r.Get("/items/{id}/play/audio/{audioIdx:[0-9]+}/index.m3u8", proxyHLSAudio(streamKC, "index.m3u8"))
-			r.Get("/items/{id}/play/audio/{audioIdx:[0-9]+}/init.mp4", proxyHLSAudio(streamKC, "init.mp4"))
-			r.Get("/items/{id}/play/audio/{audioIdx:[0-9]+}/{seg:[0-9]+}.m4s", proxyHLSAudioSegment(streamKC))
+			r.With(title).Get("/items/{id}/play/audio/{audioIdx:[0-9]+}/index.m3u8", proxyHLSAudio(streamKC, "index.m3u8"))
+			r.With(title).Get("/items/{id}/play/audio/{audioIdx:[0-9]+}/init.mp4", proxyHLSAudio(streamKC, "init.mp4"))
+			r.With(title).Get("/items/{id}/play/audio/{audioIdx:[0-9]+}/{seg:[0-9]+}.m4s", proxyHLSAudioSegment(streamKC))
 			// Packaged-CMAF rendition routes. Rend IDs are v0/v1/.../
 			// a0/a1/... — strict regex stops collisions with the
 			// legacy {quality} routes above. The master playlist
 			// served by katalog-stream points the player at these
 			// when the item has been operator-packaged.
-			r.Get("/items/{id}/play/{rendId:[va][0-9]+}/playlist.m3u8", proxyPackagedRendition(streamKC, "playlist.m3u8"))
-			r.Get("/items/{id}/play/{rendId:[va][0-9]+}/iframes.m3u8", proxyPackagedRendition(streamKC, "iframes.m3u8"))
-			r.Get("/items/{id}/play/{rendId:[va][0-9]+}/init.mp4", proxyPackagedRendition(streamKC, "init.mp4"))
-			r.Get("/items/{id}/play/{rendId:[va][0-9]+}/seg-{seg:[0-9]+}.m4s", proxyPackagedSegment(streamKC))
+			r.With(title).Get("/items/{id}/play/{rendId:[va][0-9]+}/playlist.m3u8", proxyPackagedRendition(streamKC, "playlist.m3u8"))
+			r.With(title).Get("/items/{id}/play/{rendId:[va][0-9]+}/iframes.m3u8", proxyPackagedRendition(streamKC, "iframes.m3u8"))
+			r.With(title).Get("/items/{id}/play/{rendId:[va][0-9]+}/init.mp4", proxyPackagedRendition(streamKC, "init.mp4"))
+			r.With(title).Get("/items/{id}/play/{rendId:[va][0-9]+}/seg-{seg:[0-9]+}.m4s", proxyPackagedSegment(streamKC))
 			// Packaged WebVTT subtitle renditions (sN): the media playlist
 			// and its seg-NNNNN.vtt segments, what a master's
 			// TYPE=SUBTITLES group points at (the packager's
 			// HLS_SUBTITLES).
-			r.Get("/items/{id}/play/{rendId:s[0-9]+}/playlist.m3u8", proxyPackagedRendition(streamKC, "playlist.m3u8"))
-			r.Get("/items/{id}/play/{rendId:s[0-9]+}/seg-{seg:[0-9]+}.vtt", proxyPackagedSubtitleSegment(streamKC))
+			r.With(title).Get("/items/{id}/play/{rendId:s[0-9]+}/playlist.m3u8", proxyPackagedRendition(streamKC, "playlist.m3u8"))
+			r.With(title).Get("/items/{id}/play/{rendId:s[0-9]+}/seg-{seg:[0-9]+}.vtt", proxyPackagedSubtitleSegment(streamKC))
 			// Trickplay scrub-preview thumbnails. VTT + JPG sprite
 			// sheets; the player loads these into hls.js's trickplay
 			// hook (or directly via the seek-bar hover UI).
-			r.Get("/items/{id}/play/trickplay/thumbnails.vtt", proxyTrickplayVTT(streamKC))
-			r.Get("/items/{id}/play/trickplay/sprite-{n:[0-9]+}.jpg", proxyTrickplaySprite(streamKC))
+			r.With(title).Get("/items/{id}/play/trickplay/thumbnails.vtt", proxyTrickplayVTT(streamKC))
+			r.With(title).Get("/items/{id}/play/trickplay/sprite-{n:[0-9]+}.jpg", proxyTrickplaySprite(streamKC))
 			// Embedded-subtitle stream: extracted on demand by
 			// katalog-stream (ffmpeg -c:s webvtt). Proxied here so the
 			// player can append ?stream=… and the browser's <track src>
 			// works without CORS.
-			r.Get("/items/{id}/play/subtitles/{streamIndex}.vtt", proxyEmbeddedSubtitle(streamKC))
+			r.With(title).Get("/items/{id}/play/subtitles/{streamIndex}.vtt", proxyEmbeddedSubtitle(streamKC))
 			// Sidecar (pre-packaged) subtitle file. The subtitles list
 			// handler above synthesises URLs that point here; the player
 			// then mounts them as <track src>. Stream-token auth so the
 			// browser's <track> requests work without OIDC headers.
-			r.Get("/play/subs/{id}.vtt", proxySidecarSubtitle(streamKC))
+			r.With(g.subtitle).Get("/play/subs/{id}.vtt", proxySidecarSubtitle(streamKC))
 		})
 	})
 

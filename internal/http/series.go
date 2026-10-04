@@ -12,7 +12,9 @@ import (
 )
 
 // seriesEpisodes returns every episode of a series, grouped by season.
-// The Series detail page renders each season as an accordion / list.
+// The Series detail page renders each season as an accordion / list. 404
+// when katalog-api has no such series, or the viewer's rating cap leaves it
+// out; the episodes the cap leaves out are not listed.
 func seriesEpisodes(kc *katalog.Client, st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
@@ -21,6 +23,10 @@ func seriesEpisodes(kc *katalog.Client, st *store.Store) http.HandlerFunc {
 		eps, err := kc.ListSeriesEpisodes(r.Context(), bearer, id)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		if eps == nil { // katalog-api's 404: no such series, or one the viewer's cap leaves out
+			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
 		// Stamp the current user's watched_at on each episode so the
@@ -64,7 +70,9 @@ func seriesEpisodes(kc *katalog.Client, st *store.Store) http.HandlerFunc {
 //
 // Specials (season 0) are neither the first nor the next episode unless
 // the viewer is inside season 0 already: katalog lists them first, so a
-// series nobody had started used to begin with a special.
+// series nobody had started used to begin with a special. 404 when katalog
+// has no such series, or the viewer's rating cap leaves it out; an episode
+// the cap leaves out is never the next.
 func nextEpisode(kc *katalog.Client, st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		seriesID := chi.URLParam(r, "id")
@@ -74,6 +82,10 @@ func nextEpisode(kc *katalog.Client, st *store.Store) http.HandlerFunc {
 		eps, err := kc.ListSeriesEpisodes(r.Context(), bearer, seriesID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		if eps == nil { // katalog-api's 404: no such series, or one the viewer's cap leaves out
+			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
 		if len(eps) == 0 {
@@ -177,7 +189,8 @@ func episodeIDs(eps []katalog.Item) []string {
 //
 // If /play/info fails or returns 0 (e.g. item not yet packaged), we
 // fall through with the raw segments — same behaviour as before this
-// clamp was added.
+// clamp was added. 404 when katalog-api has no such item, or the viewer's
+// rating cap leaves it out.
 func itemSegments(kc, streamKC *katalog.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
@@ -185,6 +198,10 @@ func itemSegments(kc, streamKC *katalog.Client) http.HandlerFunc {
 		segs, err := kc.ListSegments(r.Context(), bearer, id)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		if segs == nil { // katalog-api's 404: no such item, or one the viewer's cap leaves out
+			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
 		if durMs := streamKC.PlayInfoDurationMs(r.Context(), bearer, id); durMs > 0 {
