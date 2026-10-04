@@ -53,6 +53,15 @@ type Config struct {
 	// extension buttons. Empty/unreachable => no extensions (empty slot).
 	PortalBaseURL string
 
+	// AccountDeletionToken is the token chino-api and portal-api show each
+	// other to delete a person's account and their data
+	// (ACCOUNT_DELETION_TOKEN, Secret zaentrum-people's deletion-token on the
+	// platform): DELETE /api/v1/me asks portal-api with it to delete the
+	// signed-in person's account once their data is deleted here, and
+	// portal-api calls DELETE /api/v1/admin/accounts/{sub}/data with it when
+	// an admin deletes someone. Empty: neither is available.
+	AccountDeletionToken string
+
 	// AdminRole is the realm role, in the access token's realm_access.roles,
 	// that opens /api/v1/admin/* (the packaging routes): ADMIN_ROLE, by
 	// default zaentrum-admin, the role katalog-manager and the portal take an
@@ -155,6 +164,8 @@ func Load() Config {
 		KafkaBrokers:     splitCSV(envDefault("KAFKA_BROKERS", "")),
 		KafkaCertDir:     envDefault("KAFKA_CERT_DIR", ""),
 		KafkaTopicPrefix: envDefault("KAFKA_TOPIC_PREFIX", "stube."),
+
+		AccountDeletionToken: envDefault("ACCOUNT_DELETION_TOKEN", ""),
 	}
 	return c
 }

@@ -92,6 +92,9 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			r.Use(middleware.Timeout(2 * time.Minute))
 			r.Use(verifier.Middleware)
 			r.Get("/me", whoAmI)
+			// The signed-in person deletes their account: what chino keeps
+			// of them here, then the account through portal-api (account.go).
+			r.Delete("/me", deleteMe(st, pc, cfg.AccountDeletionToken))
 			r.Get("/me/continue-watching", continueWatching(st, kc))
 			// Mints a long-lived stream token (TTL 6 h) the player
 			// uses on <video src> URLs so OIDC silent-renew can't
@@ -171,6 +174,10 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			admin := newAdminAccess(cfg.AdminRole, cfg.AdminSubjects)
 			r.With(title).Post("/admin/items/{id}/package", postPackageRequest(admin, cfg.KatalogManagerURL))
 			r.With(title).Get("/admin/items/{id}/package", getPackageStatus(admin, cfg.KatalogManagerURL))
+			// Admin: what chino keeps of an account an admin deletes on the
+			// portal's People page, for portal-api with the account deletion
+			// token (account.go).
+			r.Delete("/admin/accounts/{sub}/data", deleteAccountData(st, admin, cfg.AccountDeletionToken))
 		})
 
 		// Live catalog stream (SSE), in its OWN group — the default
