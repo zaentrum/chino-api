@@ -21,10 +21,10 @@ type flagSpec struct {
 }
 
 // list returns the user's current set of items in the flag table,
-// newest-first. The body is a thin envelope so the front-end can read
-// `items` regardless of which flag it's asking about — mirrors the
-// shape of /continue-watching.
-func flagList(st *store.Store, spec flagSpec) http.HandlerFunc {
+// newest-first, a capped viewer's those its cap allows. The body is a thin
+// envelope so the front-end can read `items` regardless of which flag it's
+// asking about — mirrors the shape of /continue-watching.
+func flagList(st *store.Store, spec flagSpec, g gate) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := auth.SubjectFromContext(r.Context())
 		if userID == "" {
@@ -34,6 +34,10 @@ func flagList(st *store.Store, spec flagSpec) http.HandlerFunc {
 		ids, err := st.ListFlag(r.Context(), spec.table, userID, 200)
 		if err != nil {
 			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if ids, err = g.visibleIDs(r.Context(), ids); err != nil {
+			catalogUnavailable(w, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

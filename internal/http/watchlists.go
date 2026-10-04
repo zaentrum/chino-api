@@ -79,8 +79,9 @@ func listError(w http.ResponseWriter, err error) bool {
 }
 
 // listWatchlists -> GET /me/watchlists. Default list first, then others
-// by createdAt asc (ordering enforced in the store query).
-func listWatchlists(st *store.Store) http.HandlerFunc {
+// by createdAt asc (ordering enforced in the store query). A capped viewer's
+// itemCount counts the titles of the list its cap allows.
+func listWatchlists(st *store.Store, g gate) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := auth.SubjectFromContext(r.Context())
 		if userID == "" {
@@ -91,6 +92,20 @@ func listWatchlists(st *store.Store) http.HandlerFunc {
 		if err != nil {
 			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
 			return
+		}
+		if _, capped := auth.MaxRatingFromContext(r.Context()); capped {
+			for i := range rows {
+				ids, err := st.GetWatchlistItems(r.Context(), rows[i].ID)
+				if err != nil {
+					http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
+				if ids, err = g.visibleIDs(r.Context(), ids); err != nil {
+					catalogUnavailable(w, err)
+					return
+				}
+				rows[i].ItemCount = len(ids)
+			}
 		}
 		lists := make([]watchlistJSON, 0, len(rows))
 		for _, row := range rows {
@@ -175,8 +190,9 @@ func deleteWatchlist(st *store.Store) http.HandlerFunc {
 }
 
 // getWatchlist -> GET /me/watchlists/{listId}. Returns the list metadata
-// plus its item ids (newest-added first). 404 if not the caller's.
-func getWatchlist(st *store.Store) http.HandlerFunc {
+// plus its item ids (newest-added first), a capped viewer's those its cap
+// allows. 404 if not the caller's.
+func getWatchlist(st *store.Store, g gate) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := auth.SubjectFromContext(r.Context())
 		if userID == "" {
@@ -191,6 +207,10 @@ func getWatchlist(st *store.Store) http.HandlerFunc {
 		ids, err := st.GetWatchlistItems(r.Context(), listID)
 		if err != nil {
 			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if ids, err = g.visibleIDs(r.Context(), ids); err != nil {
+			catalogUnavailable(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -233,15 +253,20 @@ func setWatchlistItem(st *store.Store, add bool) http.HandlerFunc {
 // watchlistMemberships -> GET /me/watchlists/memberships?ids=a,b,c.
 // Returns { memberships: { itemId: [listId,...] } } for the caller's
 // lists. Items in no list may be omitted. Drives the picker checkmarks
-// and the card "saved" badge.
-func watchlistMemberships(st *store.Store) http.HandlerFunc {
+// and the card "saved" badge. A capped viewer's leave out the titles its
+// cap does not allow.
+func watchlistMemberships(st *store.Store, g gate) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := auth.SubjectFromContext(r.Context())
 		if userID == "" {
 			http.Error(w, "no subject", http.StatusUnauthorized)
 			return
 		}
-		ids := parseIDsCSV(r.URL.Query().Get("ids"), maxMembershipID)
+		ids, err := g.visibleIDs(r.Context(), parseIDsCSV(r.URL.Query().Get("ids"), maxMembershipID))
+		if err != nil {
+			catalogUnavailable(w, err)
+			return
+		}
 		m, err := st.ListMemberships(r.Context(), userID, ids)
 		if err != nil {
 			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
@@ -287,8 +312,9 @@ func parseIDsCSV(raw string, max int) []string {
 // the user's default list resolved via EnsureDefaultList. The default
 // list is created lazily here so a fresh user's first add still works.
 
-// defaultListGet -> GET /me/watchlist == default list's items.
-func defaultListGet(st *store.Store) http.HandlerFunc {
+// defaultListGet -> GET /me/watchlist == default list's items, a capped
+// viewer's those its cap allows.
+func defaultListGet(st *store.Store, g gate) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := auth.SubjectFromContext(r.Context())
 		if userID == "" {
@@ -303,6 +329,10 @@ func defaultListGet(st *store.Store) http.HandlerFunc {
 		ids, err := st.GetWatchlistItems(r.Context(), listID)
 		if err != nil {
 			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if ids, err = g.visibleIDs(r.Context(), ids); err != nil {
+			catalogUnavailable(w, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

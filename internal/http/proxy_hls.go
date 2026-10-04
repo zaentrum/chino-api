@@ -21,11 +21,10 @@ func proxyHLS(kc *katalog.Client, leaf string) http.HandlerFunc {
 // /api/play/packaged-ids on katalog-stream. No item-id substitution,
 // just a static path forward — used by the Zap pager once per
 // session to filter its candidate pool to instant-start (packaged)
-// items.
-func proxyPackagedIDs(kc *katalog.Client) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		kc.ProxyStream(w, r, "/api/play/packaged-ids", bearerFrom(r))
-	}
+// items. A capped viewer's list leaves out the titles its cap does not
+// allow (gate.packagedIDs).
+func proxyPackagedIDs(kc *katalog.Client, g gate) http.HandlerFunc {
+	return g.filteredStream(kc, "/api/play/packaged-ids", g.packagedIDs)
 }
 
 // proxyZapFeed forwards GET /api/v1/play/zap-feed to chino-stream's
@@ -33,11 +32,10 @@ func proxyPackagedIDs(kc *katalog.Client) http.HandlerFunc {
 // primary source for its candidate queue; chino-stream maintains
 // the pre-warmed pool in memory and the upstream call returns up to
 // `limit` entries with per-item seekSec already baked in. The query
-// string (limit=N) is preserved by ProxyStream.
-func proxyZapFeed(kc *katalog.Client) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		kc.ProxyStream(w, r, "/api/play/zap-feed", bearerFrom(r))
-	}
+// string (limit=N) is preserved by ProxyStream. A capped viewer's feed
+// leaves out the cards whose titles its cap does not allow (gate.zapFeed).
+func proxyZapFeed(kc *katalog.Client, g gate) http.HandlerFunc {
+	return g.filteredStream(kc, "/api/play/zap-feed", g.zapFeed)
 }
 
 // proxyHLSQ forwards to /api/play/{id}/{quality}/<leaf> on

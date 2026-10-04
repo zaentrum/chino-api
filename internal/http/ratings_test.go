@@ -2,12 +2,18 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"reflect"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,10 +21,12 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/zaentrum/chino-api/internal/auth"
 	"github.com/zaentrum/chino-api/internal/config"
 	"github.com/zaentrum/chino-api/internal/eventsse"
+	"github.com/zaentrum/chino-api/internal/store"
 )
 
 // claimCases are bearers' max_rating claims and the cap each holds its viewer
@@ -398,5 +406,238 @@ func TestWhatKatalogDoesNotFindIs404(t *testing.T) {
 		if w := do(h, "GET", path, nil); w.Code != want {
 			t.Errorf("%s: %d %q, want %d", path, w.Code, w.Body, want)
 		}
+	}
+}
+
+// testDatabase names the PostgreSQL the tests of chino-api's own lists use;
+// they are skipped without it. Each test works in a schema of its own.
+const testDatabase = "CHINO_API_TEST_DATABASE_URL"
+
+// testStore is chino-api's store, migrated, in a schema of its own on the
+// database testDatabase names, dropped when the test ends.
+func testStore(t *testing.T) *store.Store {
+	t.Helper()
+	dsn := os.Getenv(testDatabase)
+	if dsn == "" {
+		t.Skipf("set %s to run the tests of the lists chino-api keeps", testDatabase)
+	}
+	ctx := context.Background()
+	schema := fmt.Sprintf("chino_api_test_%d", time.Now().UnixNano())
+	admin, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close(ctx)
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		c, err := pgx.Connect(context.Background(), dsn)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer c.Close(context.Background())
+		if _, err := c.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE"); err != nil {
+			t.Error(err)
+		}
+	})
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	st, err := store.New(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	return st
+}
+
+// The lists a viewer keeps (watchlists and their counts, the default
+// watchlist, likes, memberships), its history and what it goes on watching
+// leave out what its cap does not allow, and every title of a viewer without
+// a cap is in them as before.
+func TestAViewersListsAreHeldToItsCap(t *testing.T) {
+	st := testStore(t)
+	is := newIssuer(t)
+	katalog := ratedKatalog(t)
+	h, err := NewRouter(config.Config{OIDCIssuer: is.URL, OIDCAudience: "chino", OIDCEnabled: true,
+		KatalogBaseURL: katalog.URL, StreamBaseURL: "http://chino-stream.invalid",
+		ArtworkBaseURL: "http://katalog-manager.invalid", StreamSigningKey: signingKey}, st, eventsse.NewBroker())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	titles := []string{"adult", "kid", "unrated", "ep16", "ep6"}
+	for _, user := range []string{"kid-1", "adult-1"} {
+		def, err := st.EnsureDefaultList(ctx, user)
+		if err != nil {
+			t.Fatal(err)
+		}
+		other, err := st.CreateWatchlist(ctx, user, "Saved for later")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range titles {
+			if err := st.AddWatchlistItem(ctx, user, def, id); err != nil {
+				t.Fatal(err)
+			}
+			if err := st.SetFlag(ctx, store.LikesTable, user, id, true); err != nil {
+				t.Fatal(err)
+			}
+			if err := st.SaveProgress(ctx, user, id, 120, 3600); err != nil {
+				t.Fatal(err)
+			}
+			// History is another viewer's: what a viewer watched is finished,
+			// and goes from what it goes on watching.
+			if err := st.MarkWatched(ctx, user+"-history", id); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := st.AddWatchlistItem(ctx, user, other.ID, "adult"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ids := func(t *testing.T, body string, key string) string {
+		t.Helper()
+		var v map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(body), &v); err != nil {
+			t.Fatalf("%s: %v", body, err)
+		}
+		var list []json.RawMessage
+		_ = json.Unmarshal(v[key], &list)
+		var out []string
+		for _, e := range list {
+			var s string
+			if json.Unmarshal(e, &s) == nil {
+				out = append(out, s)
+				continue
+			}
+			var it struct {
+				ID string `json:"id"`
+			}
+			_ = json.Unmarshal(e, &it)
+			out = append(out, it.ID)
+		}
+		sort.Strings(out)
+		return strings.Join(out, " ")
+	}
+	for _, tc := range []struct {
+		user   string
+		claim  any
+		titles string
+		counts string
+	}{
+		{"kid-1", 12, "ep6 kid", "Watchlist 2, Saved for later 0"},
+		{"kid-1", 5, "", "Watchlist 0, Saved for later 0"},
+		{"adult-1", nil, "adult ep16 ep6 kid unrated", "Watchlist 5, Saved for later 1"},
+	} {
+		bearer := bearerWith(t, is, tc.user, tc.claim)
+		def, _ := st.EnsureDefaultList(ctx, tc.user)
+		for path, header := range map[string]http.Header{"/api/v1/me/watchlist": bearer, "/api/v1/me/watchlists/" + def: bearer,
+			"/api/v1/me/likes": bearer, "/api/v1/me/continue-watching": bearer,
+			"/api/v1/me/watched": bearerWith(t, is, tc.user+"-history", tc.claim)} {
+			w := do(h, "GET", path, header)
+			if got := ids(t, w.Body.String(), "items"); w.Code != http.StatusOK || got != tc.titles {
+				t.Errorf("%s capped at %v, %s: %d %q, want %q", tc.user, tc.claim, path, w.Code, got, tc.titles)
+			}
+		}
+		w := do(h, "GET", "/api/v1/me/watchlists/memberships?ids="+strings.Join(titles, ","), bearer)
+		var m struct {
+			Memberships map[string][]string `json:"memberships"`
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &m)
+		var in []string
+		for id := range m.Memberships {
+			in = append(in, id)
+		}
+		sort.Strings(in)
+		if strings.Join(in, " ") != tc.titles {
+			t.Errorf("%s capped at %v, memberships: %v, want %q", tc.user, tc.claim, m.Memberships, tc.titles)
+		}
+		w = do(h, "GET", "/api/v1/me/watchlists", bearer)
+		var lists struct {
+			Lists []struct {
+				Name      string `json:"name"`
+				ItemCount int    `json:"itemCount"`
+			} `json:"lists"`
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &lists)
+		var counts []string
+		for _, l := range lists.Lists {
+			counts = append(counts, l.Name+" "+strconv.Itoa(l.ItemCount))
+		}
+		if got := strings.Join(counts, ", "); got != tc.counts {
+			t.Errorf("%s capped at %v, the lists: %q, want %q", tc.user, tc.claim, got, tc.counts)
+		}
+	}
+}
+
+// The Zap feed and the packaged ids are chino-stream's, and know no rating:
+// a capped viewer's leave out the titles its cap does not allow, keeping
+// everything else of the answer; a viewer without a cap gets them as
+// chino-stream sends them.
+func TestTheZapFeedsAreHeldToTheCap(t *testing.T) {
+	is := newIssuer(t)
+	const feed = `{"items":[{"id":"adult","title":"Adult","seek_sec":12.5},{"id":"kid","title":"Kid","seek_sec":3.0},` +
+		`{"id":"unrated","title":"Unrated"},{"id":"ep6","title":"Six","seek_sec":1.0}],"pool_size":8,"warmed":4}`
+	const packaged = `{"ids":["adult","kid","unrated","ep16","ep6"]}`
+	stream := newRecorder(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "private, max-age=30")
+		switch r.URL.Path {
+		case "/api/play/zap-feed":
+			_, _ = io.WriteString(w, feed)
+		case "/api/play/packaged-ids":
+			_, _ = io.WriteString(w, packaged)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	katalog := ratedKatalog(t)
+	h, err := NewRouter(config.Config{OIDCIssuer: is.URL, OIDCAudience: "chino", OIDCEnabled: true,
+		KatalogBaseURL: katalog.URL, StreamBaseURL: stream.URL, ArtworkBaseURL: "http://katalog-manager.invalid",
+		StreamSigningKey: signingKey}, nil, eventsse.NewBroker())
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, _ := auth.NewSigner(signingKey)
+	tok, _ := signer.MintCapped("kid-1", 12, time.Hour)
+	for _, tc := range []struct {
+		name          string
+		query         string
+		header        http.Header
+		feed, packIDs string
+	}{
+		{"a capped bearer", "?limit=4", bearerWith(t, is, "kid-1", 12),
+			`{"items":[{"id":"kid","title":"Kid","seek_sec":3.0},{"id":"ep6","title":"Six","seek_sec":1.0}],"pool_size":8,"warmed":4}`,
+			`{"ids":["kid","ep6"]}`},
+		{"a capped stream token", "?limit=4&stream=" + tok, nil,
+			`{"items":[{"id":"kid","title":"Kid","seek_sec":3.0},{"id":"ep6","title":"Six","seek_sec":1.0}],"pool_size":8,"warmed":4}`,
+			`{"ids":["kid","ep6"]}`},
+		{"a viewer without a cap", "?limit=4", bearerWith(t, is, "adult-1", nil), feed, packaged},
+	} {
+		w := do(h, "GET", "/api/v1/play/zap-feed"+tc.query, tc.header)
+		var got, want any
+		_ = json.Unmarshal(w.Body.Bytes(), &got)
+		_ = json.Unmarshal([]byte(tc.feed), &want)
+		if w.Code != http.StatusOK || !reflect.DeepEqual(got, want) || w.Header().Get("Cache-Control") != "private, max-age=30" {
+			t.Errorf("%s, the Zap feed: %d %s, want %s", tc.name, w.Code, w.Body, tc.feed)
+		}
+		if r := stream.take(); len(r) != 1 || !strings.Contains(r[0], "limit=4") {
+			t.Errorf("%s: chino-stream got %q, want the query passed on", tc.name, r)
+		}
+		w = do(h, "GET", "/api/v1/play/packaged-ids"+tc.query, tc.header)
+		if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != tc.packIDs {
+			t.Errorf("%s, the packaged ids: %d %s, want %s", tc.name, w.Code, w.Body, tc.packIDs)
+		}
+		stream.take()
 	}
 }

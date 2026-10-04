@@ -132,10 +132,10 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// list; memberships hydrates the checkmarks + card "saved"
 			// badge in one round-trip. (memberships is registered before
 			// the {listId} routes so chi matches the static segment.)
-			r.Get("/me/watchlists", listWatchlists(st))
+			r.Get("/me/watchlists", listWatchlists(st, g))
 			r.Post("/me/watchlists", createWatchlist(st))
-			r.Get("/me/watchlists/memberships", watchlistMemberships(st))
-			r.Get("/me/watchlists/{listId}", getWatchlist(st))
+			r.Get("/me/watchlists/memberships", watchlistMemberships(st, g))
+			r.Get("/me/watchlists/{listId}", getWatchlist(st, g))
 			r.Patch("/me/watchlists/{listId}", renameWatchlist(st))
 			r.Delete("/me/watchlists/{listId}", deleteWatchlist(st))
 			r.With(item).Put("/me/watchlists/{listId}/items/{itemId}", setWatchlistItem(st, true))
@@ -145,13 +145,13 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// already-installed mobile/TV builds, but now backed by the
 			// user's default list (resolved/created via EnsureDefaultList)
 			// instead of the legacy single watchlist flag table.
-			r.Get("/me/watchlist", defaultListGet(st))
+			r.Get("/me/watchlist", defaultListGet(st, g))
 			r.With(title).Put("/me/watchlist/{id}", defaultListSet(st, true))
 			r.With(title).Delete("/me/watchlist/{id}", defaultListSet(st, false))
 
 			// Likes stay on the simple per-user flag table — unchanged.
 			likesSpec := flagSpec{table: store.LikesTable, field: "liked"}
-			r.Get("/me/likes", flagList(st, likesSpec))
+			r.Get("/me/likes", flagList(st, likesSpec, g))
 			r.With(title).Put("/me/likes/{id}", flagSet(st, likesSpec, true))
 			r.With(title).Delete("/me/likes/{id}", flagSet(st, likesSpec, false))
 
@@ -233,13 +233,16 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// package on disk. Used by the Zap pager to filter its
 			// candidate pool to instant-start items (packaged items
 			// skip ffmpeg, serve in <50ms). Proxies straight through
-			// to chino-stream which owns the on-disk truth.
-			r.Get("/play/packaged-ids", proxyPackagedIDs(streamKC))
+			// to chino-stream which owns the on-disk truth; a capped
+			// viewer's leaves out what its cap does not allow.
+			r.Get("/play/packaged-ids", proxyPackagedIDs(streamKC, g))
 			// Zap warm-pool feed. chino-stream maintains a small
 			// in-RAM pool of speculatively pre-warmed candidates;
 			// chino-web's useZapFeed consumes the head of the pool
-			// instead of building a cold candidate set per session.
-			r.Get("/play/zap-feed", proxyZapFeed(streamKC))
+			// instead of building a cold candidate set per session. A
+			// capped viewer's leaves out the cards its cap does not
+			// allow.
+			r.Get("/play/zap-feed", proxyZapFeed(streamKC, g))
 			r.With(title).Get("/items/{id}/play/{quality}/index.m3u8", proxyHLSQ(streamKC, "index.m3u8"))
 			r.With(title).Get("/items/{id}/play/{quality}/init.mp4", proxyHLSQ(streamKC, "init.mp4"))
 			r.With(title).Get("/items/{id}/play/{quality}/{seg:[0-9]+}.m4s", proxyHLSSegment(streamKC))
