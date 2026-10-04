@@ -252,6 +252,12 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			r.Get("/items/{id}/play/{rendId:[va][0-9]+}/iframes.m3u8", proxyPackagedRendition(streamKC, "iframes.m3u8"))
 			r.Get("/items/{id}/play/{rendId:[va][0-9]+}/init.mp4", proxyPackagedRendition(streamKC, "init.mp4"))
 			r.Get("/items/{id}/play/{rendId:[va][0-9]+}/seg-{seg:[0-9]+}.m4s", proxyPackagedSegment(streamKC))
+			// Packaged WebVTT subtitle renditions (sN): the media playlist
+			// and its seg-NNNNN.vtt segments, what a master's
+			// TYPE=SUBTITLES group points at (the packager's
+			// HLS_SUBTITLES).
+			r.Get("/items/{id}/play/{rendId:s[0-9]+}/playlist.m3u8", proxyPackagedRendition(streamKC, "playlist.m3u8"))
+			r.Get("/items/{id}/play/{rendId:s[0-9]+}/seg-{seg:[0-9]+}.vtt", proxyPackagedSubtitleSegment(streamKC))
 			// Trickplay scrub-preview thumbnails. VTT + JPG sprite
 			// sheets; the player loads these into hls.js's trickplay
 			// hook (or directly via the seek-bar hover UI).

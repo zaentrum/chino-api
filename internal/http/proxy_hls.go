@@ -109,6 +109,19 @@ func proxyPackagedSegment(kc *katalog.Client) http.HandlerFunc {
 	}
 }
 
+// proxyPackagedSubtitleSegment forwards to
+// /api/play/{id}/{rendId}/seg-{seg}.vtt — one WebVTT segment of a
+// packaged HLS subtitle rendition (sN, scoped by the route regex in
+// router.go). Its media playlist goes through proxyPackagedRendition.
+func proxyPackagedSubtitleSegment(kc *katalog.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		rendID := chi.URLParam(r, "rendId")
+		seg := chi.URLParam(r, "seg")
+		kc.ProxyStream(w, r, "/api/play/"+id+"/"+rendID+"/seg-"+seg+".vtt", bearerFrom(r))
+	}
+}
+
 // proxyTrickplayVTT forwards to /api/play/{id}/trickplay/thumbnails.vtt
 // — the WebVTT cue file that maps scrub timestamps to sprite-sheet
 // coordinates. Written once per item by the analyzer; served as a
