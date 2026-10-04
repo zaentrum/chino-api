@@ -25,8 +25,6 @@ import (
 func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (http.Handler, error) {
 	r := chi.NewRouter()
 
-	SetAdminSubjects(cfg.AdminSubjects)
-
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	// middleware.Logger, with ?token= / ?stream= values blanked out.
@@ -162,10 +160,12 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// Admin: an item's packaging, and its steps to watch it by,
 			// forwarded to katalog-manager (the catalog's writer, not the
 			// read-only katalog-api) with the admin's bearer
-			// (admin_package.go). The admin check is in the handlers, so
-			// the rest of the chain needs no role-aware auth.
-			r.Post("/admin/items/{id}/package", postPackageRequest(cfg.KatalogManagerURL))
-			r.Get("/admin/items/{id}/package", getPackageStatus(cfg.KatalogManagerURL))
+			// (admin_package.go). For a bearer with the admin role; the
+			// check is in the handlers, so the rest of the chain needs no
+			// role-aware auth.
+			admin := newAdminAccess(cfg.AdminRole, cfg.AdminSubjects)
+			r.Post("/admin/items/{id}/package", postPackageRequest(admin, cfg.KatalogManagerURL))
+			r.Get("/admin/items/{id}/package", getPackageStatus(admin, cfg.KatalogManagerURL))
 		})
 
 		// Live catalog stream (SSE), in its OWN group — the default

@@ -53,12 +53,17 @@ type Config struct {
 	// extension buttons. Empty/unreachable => no extensions (empty slot).
 	PortalBaseURL string
 
-	// AdminSubjects is the comma-separated allowlist of Keycloak `sub`
-	// values that may call POST /api/v1/admin/* endpoints (currently
-	// just the packaging trigger). Empty list = nobody can; useful for
-	// disabling the admin surface entirely in non-prod. Future: switch
-	// to a role-claim check (realm_access.roles contains "admin") so
-	// we don't have to redeploy on team changes.
+	// AdminRole is the realm role, in the access token's realm_access.roles,
+	// that opens /api/v1/admin/* (the packaging routes): ADMIN_ROLE, by
+	// default zaentrum-admin, the role katalog-manager and the portal take an
+	// administrator by.
+	AdminRole string
+
+	// AdminSubjects is DEPRECATED: a comma-separated list of OIDC `sub`
+	// values let through /api/v1/admin/* besides the admin role
+	// (ADMIN_SUBJECTS), for a deployment that granted admin by subject.
+	// Empty, the default, adds nobody. It goes in a coming release: give
+	// those users the admin role instead.
 	AdminSubjects []string
 
 	// StreamSigningKey is the base64-encoded HMAC secret used to mint
@@ -118,6 +123,9 @@ type Config struct {
 // namespace chino-api runs in.
 const DefaultKatalogManagerURL = "http://katalog-manager-api"
 
+// DefaultAdminRole is the admin role when ADMIN_ROLE names none.
+const DefaultAdminRole = "zaentrum-admin"
+
 func Load() Config {
 	c := Config{
 		Addr:               envDefault("ADDR", ":8080"),
@@ -129,6 +137,7 @@ func Load() Config {
 		ArtworkBaseURL:     envDefault("ARTWORK_BASE_URL", "http://katalog-manager-api.stube.svc.cluster.local"),
 		KatalogManagerURL:  envDefault("KATALOG_MANAGER_URL", envDefault("ANALYZER_BASE_URL", DefaultKatalogManagerURL)),
 		PortalBaseURL:      envDefault("PORTAL_BASE_URL", "http://portal-api"),
+		AdminRole:          envDefault("ADMIN_ROLE", DefaultAdminRole),
 		AdminSubjects:      splitCSV(envDefault("ADMIN_SUBJECTS", "")),
 		PgURL:              envDefault("PG_URL", ""),
 		StreamSigningKey:   envDefault("STREAM_SIGNING_KEY", ""),

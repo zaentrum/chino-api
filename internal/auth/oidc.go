@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 
@@ -14,6 +15,7 @@ type ctxKey int
 
 const (
 	subjectKey ctxKey = iota
+	rolesKey
 )
 
 type Verifier struct {
@@ -116,6 +118,7 @@ func (v *Verifier) middleware(next http.Handler, allowStream bool) http.Handler 
 			return
 		}
 		ctx := context.WithValue(r.Context(), subjectKey, tok.Subject)
+		ctx = context.WithValue(ctx, rolesKey, realmRoles(tok))
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -126,4 +129,33 @@ func SubjectFromContext(ctx context.Context) (string, error) {
 		return "", errors.New("no subject in context")
 	}
 	return v, nil
+}
+
+// realmRoles are the realm roles a verified access token carries, where the
+// realm puts them: realm_access.roles, a list of strings. A token without
+// them, or with them in any other shape, carries none.
+func realmRoles(tok *oidc.IDToken) []string {
+	var c struct {
+		RealmAccess struct {
+			Roles []string `json:"roles"`
+		} `json:"realm_access"`
+	}
+	if err := tok.Claims(&c); err != nil {
+		return nil
+	}
+	return c.RealmAccess.Roles
+}
+
+// RolesFromContext are the realm roles of the bearer a request was verified
+// with; none for a stream token, which carries a subject alone, and none with
+// OIDC off.
+func RolesFromContext(ctx context.Context) []string {
+	roles, _ := ctx.Value(rolesKey).([]string)
+	return roles
+}
+
+// HasRole reports whether the request's verified bearer carries the realm
+// role role; never for an empty role.
+func HasRole(ctx context.Context, role string) bool {
+	return role != "" && slices.Contains(RolesFromContext(ctx), role)
 }

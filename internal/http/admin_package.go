@@ -9,38 +9,46 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/zaentrum/chino-api/internal/auth"
+	"github.com/zaentrum/chino-api/internal/config"
 	"github.com/zaentrum/chino-api/internal/redact"
 )
 
-// admin endpoints share a single allowlist check. Kept in a package
-// variable so the constructor (router.go) can populate it once from
-// cfg.AdminSubjects; the handler closures below close over it via
-// requireAdmin.
-var adminSubjects = map[string]struct{}{}
-
-// SetAdminSubjects populates the in-package allowlist. Called once
-// from router construction.
-func SetAdminSubjects(subs []string) {
-	adminSubjects = make(map[string]struct{}, len(subs))
-	for _, s := range subs {
-		adminSubjects[s] = struct{}{}
-	}
+// adminAccess is who may call the /api/v1/admin/* routes: a caller whose
+// verified bearer carries the admin role in its realm roles
+// (realm_access.roles), as katalog-manager and the portal tell an
+// administrator; and, deprecated, a caller whose subject ADMIN_SUBJECTS
+// lists, let through besides it.
+type adminAccess struct {
+	role     string
+	subjects map[string]bool
 }
 
-// requireAdmin gates a request on the caller's subject being in the
-// allowlist. Returns true when access is granted, otherwise writes a
-// 403 and returns false.
-func requireAdmin(w http.ResponseWriter, r *http.Request) bool {
+// newAdminAccess is the admin access for role (config.DefaultAdminRole when
+// empty) and the deprecated subjects.
+func newAdminAccess(role string, subjects []string) adminAccess {
+	if role == "" {
+		role = config.DefaultAdminRole
+	}
+	a := adminAccess{role: role, subjects: map[string]bool{}}
+	for _, s := range subjects {
+		a.subjects[s] = true
+	}
+	return a
+}
+
+// allow reports whether the request's caller is an admin, and otherwise
+// answers it: 401 without a subject, 403 naming the role for anyone else.
+func (a adminAccess) allow(w http.ResponseWriter, r *http.Request) bool {
 	sub, err := auth.SubjectFromContext(r.Context())
 	if err != nil || sub == "" {
 		http.Error(w, "no subject", http.StatusUnauthorized)
 		return false
 	}
-	if _, ok := adminSubjects[sub]; !ok {
-		http.Error(w, "admin access required", http.StatusForbidden)
-		return false
+	if auth.HasRole(r.Context(), a.role) || a.subjects[sub] {
+		return true
 	}
-	return true
+	http.Error(w, "admin access required: the "+a.role+" role", http.StatusForbidden)
+	return false
 }
 
 // postPackageRequest forwards POST /api/v1/admin/items/{id}/package to
@@ -50,9 +58,9 @@ func requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 // {episodesEnqueued, episodesTotal, message} for a series, 404 for an unknown
 // item and 400 for one that cannot be packaged; asking again for an item
 // whose packaging is under way changes nothing and says so.
-func postPackageRequest(managerBase string) http.HandlerFunc {
+func postPackageRequest(admin adminAccess, managerBase string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !requireAdmin(w, r) {
+		if !admin.allow(w, r) {
 			return
 		}
 		id := chi.URLParam(r, "id")
@@ -65,9 +73,9 @@ func postPackageRequest(managerBase string) http.HandlerFunc {
 // steps, {"itemId": ..., "steps": {step: status}} (e.g. {"transcode":"done",
 // "package":"in_progress"}), which a client polls to watch an item move
 // through the pipeline.
-func getPackageStatus(managerBase string) http.HandlerFunc {
+func getPackageStatus(admin adminAccess, managerBase string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !requireAdmin(w, r) {
+		if !admin.allow(w, r) {
 			return
 		}
 		id := chi.URLParam(r, "id")
@@ -90,8 +98,8 @@ func proxyToKatalogManager(w http.ResponseWriter, r *http.Request, base, method,
 		http.Error(w, "bad katalog-manager url", http.StatusInternalServerError)
 		return
 	}
-	// The bearer requireAdmin's middleware verified: the header, or the
-	// deprecated ?token= it moved into the header.
+	// The bearer the middleware verified: the header, or the deprecated
+	// ?token= it moved into the header.
 	if bearer := r.Header.Get("Authorization"); strings.HasPrefix(bearer, "Bearer ") {
 		req.Header.Set("Authorization", bearer)
 	}

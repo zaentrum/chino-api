@@ -38,6 +38,8 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `POST /api/v1/play/events` | bearer JWT or stream token | playback telemetry (the stream token for `sendBeacon`) |
 | `GET /api/v1/events` | bearer JWT or stream token | live catalog notifications (SSE) |
 | `POST /api/v1/feedback` | bearer JWT | bug report → OpenProject (503 when unconfigured) |
+| `POST /api/v1/admin/items/{id}/package` | bearer JWT with the admin role | an item's packaging, forwarded to katalog-manager with the bearer |
+| `GET /api/v1/admin/items/{id}/package` | bearer JWT with the admin role | the item's processing steps, from katalog-manager |
 | `GET /api/v1/items/{id}/play/info` | bearer JWT or stream token | how the item plays for the client's `caps`; a packaged title's `qualities` |
 | `GET /api/v1/items/{id}/play/master.m3u8` | bearer JWT or stream token | the HLS master for the client's `caps` and `q` |
 | `POST /api/v1/items/{id}/play/prewarm` | bearer JWT or stream token | warm the variant the client starts on |
@@ -94,7 +96,8 @@ Configured entirely through environment variables (see `internal/config`):
 | `ARTWORK_BASE_URL` | katalog-manager, for artwork |
 | `KATALOG_MANAGER_URL` | katalog-manager, where the admin packaging routes go with the admin's bearer (default `http://katalog-manager-api`; `ANALYZER_BASE_URL`, its former name, is read when it is unset) |
 | `PG_URL` | Postgres URL for user-state (optional) |
-| `ADMIN_SUBJECTS` | comma-separated OIDC `sub` claims allowed on `/api/v1/admin/*` |
+| `ADMIN_ROLE` | the realm role (`realm_access.roles` of the access token) that opens `/api/v1/admin/*` (default `zaentrum-admin`, as katalog-manager and the portal) |
+| `ADMIN_SUBJECTS` | deprecated: comma-separated OIDC `sub` values let through `/api/v1/admin/*` besides the role; empty by default, and it goes in a coming release |
 | `OPENPROJECT_URL` / `OPENPROJECT_TOKEN` / `OPENPROJECT_PROJECT_ID` / `OPENPROJECT_BUG_TYPE_ID` | feedback pipeline (optional) |
 | `STREAM_SIGNING_KEY` | shared HMAC secret for signed `?stream=` URLs (optional) |
 

@@ -46,8 +46,8 @@ func TestTheAdminPackagingRoutesGoToKatalogManager(t *testing.T) {
 		"/api/analyze/items/m1/steps": `{"itemId":"m1","steps":{"package":"pending","transcode":"done"}}`,
 	})
 	katalog := newFake(t, map[string]string{})
-	h := adminRouter(t, is, manager.URL, katalog.URL, func(c *config.Config) { c.AdminSubjects = []string{"admin-1"} })
-	admin := is.token(t, "admin-1", "chino")
+	h := adminRouter(t, is, manager.URL, katalog.URL, nil)
+	admin := is.tokenWith(t, "admin-1", "chino", realm("zaentrum-admin", "zaentrum-user"))
 	bearer := http.Header{"Authorization": {"Bearer " + admin}}
 
 	for _, tc := range []struct {
@@ -88,10 +88,11 @@ func TestTheAdminPackagingRoutesGoToKatalogManager(t *testing.T) {
 		header http.Header
 		code   int
 	}{
-		{"a viewer", "", http.Header{"Authorization": {"Bearer " + is.token(t, "viewer-1", "chino")}}, http.StatusForbidden},
+		{"a viewer", "", http.Header{"Authorization": {"Bearer " + is.tokenWith(t, "viewer-1", "chino", realm("zaentrum-user"))}}, http.StatusForbidden},
 		{"no credential", "", nil, http.StatusUnauthorized},
 		{"a stream token", "?stream=" + streamToken(t), nil, http.StatusUnauthorized},
-		{"a token of another audience", "", http.Header{"Authorization": {"Bearer " + is.token(t, "admin-1", "elsewhere")}}, http.StatusUnauthorized},
+		{"a token of another audience", "", http.Header{"Authorization": {"Bearer " + is.tokenWith(t, "admin-1", "elsewhere", realm("zaentrum-admin"))}},
+			http.StatusUnauthorized},
 	} {
 		for _, method := range []string{"POST", "GET"} {
 			if w := do(h, method, "/api/v1/admin/items/m1/package"+tc.path, tc.header); w.Code != tc.code {
@@ -108,18 +109,77 @@ func TestTheAdminPackagingRoutesGoToKatalogManager(t *testing.T) {
 // answer is a 502 whose words carry no credential.
 func TestTheAdminPackagingRoutesWithoutKatalogManager(t *testing.T) {
 	is := newIssuer(t)
-	admin := is.token(t, "admin-1", "chino")
-	subjects := func(c *config.Config) { c.AdminSubjects = []string{"admin-1"} }
-	h := adminRouter(t, is, "", "http://katalog-api.invalid", subjects)
+	admin := is.tokenWith(t, "admin-1", "chino", realm("zaentrum-admin"))
+	h := adminRouter(t, is, "", "http://katalog-api.invalid", nil)
 	if w := do(h, "POST", "/api/v1/admin/items/m1/package", http.Header{"Authorization": {"Bearer " + admin}}); w.Code != http.StatusServiceUnavailable ||
 		!strings.Contains(w.Body.String(), "KATALOG_MANAGER_URL") {
 		t.Errorf("no katalog-manager: %d %q, want 503 naming KATALOG_MANAGER_URL", w.Code, w.Body)
 	}
 	gone := httptest.NewServer(http.NotFoundHandler())
 	gone.Close()
-	h = adminRouter(t, is, gone.URL, "http://katalog-api.invalid", subjects)
+	h = adminRouter(t, is, gone.URL, "http://katalog-api.invalid", nil)
 	w := do(h, "POST", "/api/v1/admin/items/m1/package?token="+admin, nil)
 	if w.Code != http.StatusBadGateway || strings.Contains(w.Body.String(), admin) {
 		t.Errorf("katalog-manager gone: %d %q, want 502 without the bearer", w.Code, w.Body)
+	}
+}
+
+// realm is the claim a token carries its realm roles in.
+func realm(roles ...string) map[string]any {
+	return map[string]any{"realm_access": map[string]any{"roles": roles}}
+}
+
+// The admin routes are for a bearer whose realm roles (realm_access.roles)
+// carry the admin role, zaentrum-admin unless ADMIN_ROLE names another: not
+// for a role of another name, the role as a client's role or a claim of
+// another name, nor roles in another shape. ADMIN_SUBJECTS, deprecated, lets
+// the subjects it lists through besides; a stream token, a subject alone, is
+// never an admin's. A refusal names the role.
+func TestTheAdminRoleOpensTheAdminRoutes(t *testing.T) {
+	is := newIssuer(t)
+	manager := newFake(t, map[string]string{"/api/items/m1/package": `{"status":"pending"}`})
+	for _, tc := range []struct {
+		name   string
+		with   func(*config.Config)
+		claims map[string]any
+		sub    string
+		code   int
+	}{
+		{"the admin role", nil, realm("zaentrum-user", "zaentrum-admin"), "u1", 200},
+		{"a viewer's roles", nil, realm("zaentrum-user", "offline_access"), "u2", 403},
+		{"no roles", nil, nil, "u3", 403},
+		{"a role named admin", nil, realm("admin"), "u4", 403},
+		{"the role as a client's", nil, map[string]any{"resource_access": map[string]any{"chino": map[string]any{"roles": []string{"zaentrum-admin"}}}}, "u5", 403},
+		{"the role in another claim", nil, map[string]any{"roles": []string{"zaentrum-admin"}}, "u6", 403},
+		{"the roles a string", nil, map[string]any{"realm_access": map[string]any{"roles": "zaentrum-admin"}}, "u7", 403},
+		{"the roles mixed", nil, map[string]any{"realm_access": map[string]any{"roles": []any{"zaentrum-admin", 7}}}, "u8", 403},
+		{"another ADMIN_ROLE, its role", func(c *config.Config) { c.AdminRole = "catalog-admin" }, realm("catalog-admin"), "u9", 200},
+		{"another ADMIN_ROLE, the default role", func(c *config.Config) { c.AdminRole = "catalog-admin" }, realm("zaentrum-admin"), "u10", 403},
+		{"a subject ADMIN_SUBJECTS lists", func(c *config.Config) { c.AdminSubjects = []string{"listed", "u11"} }, realm("zaentrum-user"), "u11", 200},
+		{"a subject it does not list", func(c *config.Config) { c.AdminSubjects = []string{"listed"} }, realm("zaentrum-user"), "u12", 403},
+		{"ADMIN_SUBJECTS set, the admin role", func(c *config.Config) { c.AdminSubjects = []string{"listed"} }, realm("zaentrum-admin"), "u13", 200},
+	} {
+		h := adminRouter(t, is, manager.URL, "http://katalog-api.invalid", tc.with)
+		before := len(manager.requests())
+		w := do(h, "POST", "/api/v1/admin/items/m1/package", http.Header{"Authorization": {"Bearer " + is.tokenWith(t, tc.sub, "chino", tc.claims)}})
+		forwarded := len(manager.requests()) - before
+		if w.Code != tc.code || (tc.code == 200) != (forwarded == 1) {
+			t.Errorf("%s: %d %q, %d forwarded; want %d", tc.name, w.Code, w.Body, forwarded, tc.code)
+		}
+		if tc.code == 403 {
+			role := "zaentrum-admin"
+			if strings.HasPrefix(tc.name, "another ADMIN_ROLE") {
+				role = "catalog-admin"
+			}
+			if want := "admin access required: the " + role + " role\n"; w.Body.String() != want {
+				t.Errorf("%s: the refusal says %q, want %q", tc.name, w.Body, want)
+			}
+		}
+	}
+
+	// A stream token carries a subject alone, and the admin routes take none.
+	h := adminRouter(t, is, manager.URL, "http://katalog-api.invalid", func(c *config.Config) { c.AdminSubjects = []string{"user-1"} })
+	if w := do(h, "POST", "/api/v1/admin/items/m1/package?stream="+streamToken(t), nil); w.Code != http.StatusUnauthorized {
+		t.Errorf("a stream token of a listed subject: %d, want 401", w.Code)
 	}
 }

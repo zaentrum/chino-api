@@ -60,6 +60,13 @@ func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 // token is an access token for sub with audience aud.
 func (is *issuer) token(t *testing.T, sub, aud string) string {
 	t.Helper()
+	return is.tokenWith(t, sub, aud, nil)
+}
+
+// tokenWith is an access token for sub with audience aud, with the claims
+// extra adds (realm_access, say).
+func (is *issuer) tokenWith(t *testing.T, sub, aud string, extra map[string]any) string {
+	t.Helper()
 	part := func(v any) string {
 		b, err := json.Marshal(v)
 		if err != nil {
@@ -67,8 +74,11 @@ func (is *issuer) token(t *testing.T, sub, aud string) string {
 		}
 		return b64(b)
 	}
-	signed := part(map[string]string{"alg": "RS256", "kid": "k1", "typ": "JWT"}) + "." +
-		part(map[string]any{"iss": is.URL, "sub": sub, "aud": aud, "iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix()})
+	claims := map[string]any{"iss": is.URL, "sub": sub, "aud": aud, "iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix()}
+	for k, v := range extra {
+		claims[k] = v
+	}
+	signed := part(map[string]string{"alg": "RS256", "kid": "k1", "typ": "JWT"}) + "." + part(claims)
 	sum := sha256.Sum256([]byte(signed))
 	sig, err := rsa.SignPKCS1v15(rand.Reader, is.key, crypto.SHA256, sum[:])
 	if err != nil {

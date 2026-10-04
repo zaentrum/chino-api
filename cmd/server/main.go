@@ -21,7 +21,12 @@ func main() {
 	slog.SetDefault(logger)
 
 	cfg := config.Load()
-	slog.Info("starting chino-api", "addr", cfg.Addr, "oidc_issuer", cfg.OIDCIssuer, "oidc_audience", cfg.OIDCAudience, "pg", cfg.PgURL != "")
+	slog.Info("starting chino-api", "addr", cfg.Addr, "oidc_issuer", cfg.OIDCIssuer, "oidc_audience", cfg.OIDCAudience, "pg", cfg.PgURL != "",
+		"admin_role", cfg.AdminRole, "katalog_manager", cfg.KatalogManagerURL)
+	if len(cfg.AdminSubjects) > 0 {
+		slog.Warn("ADMIN_SUBJECTS is deprecated: /api/v1/admin/* is for the admin role, and the subjects it lists are let through besides it "+
+			"until it goes; give them the role instead", "admin_role", cfg.AdminRole, "subjects", len(cfg.AdminSubjects))
+	}
 
 	st, err := store.New(context.Background(), cfg.PgURL)
 	if err != nil {

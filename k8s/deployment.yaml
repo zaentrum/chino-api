@@ -85,13 +85,12 @@ spec:
             # name, is still read when this is unset.
             - name: KATALOG_MANAGER_URL
               value: "http://katalog-manager-api.stube.svc.cluster.local"
-            # Comma-separated Keycloak `sub` claims that may call
-            # /api/v1/admin/* endpoints. Empty = nobody. Future: switch
-            # to a realm-role check ("admin") so we don't redeploy on
-            # team changes. Source-of-truth here so chino-api doesn't
-            # have to read Keycloak roles to enforce.
-            - name: ADMIN_SUBJECTS
-              value: "00000000-0000-0000-0000-000000000000"
+            # The realm role (realm_access.roles of the access token) that
+            # opens /api/v1/admin/*, as katalog-manager and the portal tell
+            # an administrator. ADMIN_SUBJECTS, a list of `sub` values let
+            # through besides it, is deprecated and empty by default.
+            - name: ADMIN_ROLE
+              value: "zaentrum-admin"
             # DB_USER / DB_PASSWORD must be declared BEFORE PG_URL — k8s
             # only expands $(VAR) for vars already in the env list.
             - name: DB_USER
