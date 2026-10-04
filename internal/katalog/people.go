@@ -74,14 +74,9 @@ func (c *Client) SearchPeople(ctx context.Context, bearer, q string, limit int) 
 	if limit <= 0 || limit > 50 {
 		limit = 20
 	}
-	u := c.BaseURL + "/api/v1/people?q=" + url.QueryEscape(q) + "&limit=" + strconv.Itoa(limit)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := c.newRequest(ctx, "/api/v1/people", url.Values{"q": {q}, "limit": {strconv.Itoa(limit)}}, bearer)
 	if err != nil {
 		return nil, err
-	}
-	req.Header.Set("Accept", "application/json")
-	if bearer != "" {
-		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
@@ -122,17 +117,12 @@ func (c *Client) GetPerson(ctx context.Context, bearer, id string, limit int, la
 	if lang != "" {
 		q.Set("lang", lang)
 	}
-	u := c.BaseURL + "/api/v1/people/" + url.PathEscape(id) + "?" + q.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := c.newRequest(ctx, "/api/v1/people/"+url.PathEscape(id), q, bearer)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "application/json")
 	if acceptLanguage != "" {
 		req.Header.Set("Accept-Language", acceptLanguage)
-	}
-	if bearer != "" {
-		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {

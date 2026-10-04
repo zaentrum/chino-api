@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zaentrum/chino-api/internal/auth"
 	"github.com/zaentrum/chino-api/internal/redact"
 )
 
@@ -48,6 +49,10 @@ type Client struct {
 	// context.WithCancel from the inbound r.Context() — client
 	// disconnect cancels the upstream call cleanly.
 	HTTPStream *http.Client
+
+	// visible keeps katalog-api's answers of what a capped viewer may be
+	// served, and of the titles sidecar subtitles belong to (ratings.go).
+	visible answers
 }
 
 // New wires the read client. Callers that also need streaming +
@@ -263,6 +268,32 @@ func (c *Client) listByType(ctx context.Context, bearer, kind, q string, limit, 
 	return c.listAt(ctx, bearer, "/api/v1/"+kind, q, limit, offset, extra)
 }
 
+// newRequest is a GET of katalog-api's path with the query q (may be nil)
+// for the viewer of ctx: with its bearer, and with its rating cap as
+// max_rating (auth.MaxRatingFromContext), so that katalog-api serves a capped
+// viewer only what the cap allows. Every catalog request goes through it.
+func (c *Client) newRequest(ctx context.Context, path string, q url.Values, bearer string) (*http.Request, error) {
+	if age, capped := auth.MaxRatingFromContext(ctx); capped {
+		if q == nil {
+			q = url.Values{}
+		}
+		q.Set("max_rating", strconv.Itoa(age))
+	}
+	u := c.BaseURL + path
+	if len(q) > 0 {
+		u += "?" + q.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	return req, nil
+}
+
 func (c *Client) listAt(ctx context.Context, bearer, path, q string, limit, offset int, extra url.Values) ([]Item, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -283,14 +314,9 @@ func (c *Client) listAt(ctx context.Context, bearer, path, q string, limit, offs
 			v.Set(k, val)
 		}
 	}
-	u := c.BaseURL + path + "?" + v.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := c.newRequest(ctx, path, v, bearer)
 	if err != nil {
 		return nil, err
-	}
-	req.Header.Set("Accept", "application/json")
-	if bearer != "" {
-		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
@@ -326,17 +352,13 @@ func (c *Client) GetItemDetail(ctx context.Context, bearer, id string) (*Item, e
 }
 
 func (c *Client) getItem(ctx context.Context, bearer, id, include string) (*Item, error) {
-	u := c.BaseURL + "/api/v1/items/" + url.PathEscape(id)
+	var q url.Values
 	if include != "" {
-		u += "?include=" + url.QueryEscape(include)
+		q = url.Values{"include": {include}}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := c.newRequest(ctx, "/api/v1/items/"+url.PathEscape(id), q, bearer)
 	if err != nil {
 		return nil, err
-	}
-	req.Header.Set("Accept", "application/json")
-	if bearer != "" {
-		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
@@ -364,10 +386,9 @@ func (c *Client) getItem(ctx context.Context, bearer, id, include string) (*Item
 // ListGenres returns the catalogue-wide genre list, sorted alphabetically.
 // Used by chino-web's browse filter chips so the picker shows real values.
 func (c *Client) ListGenres(ctx context.Context, bearer string) ([]string, error) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/api/v1/genres", nil)
-	req.Header.Set("Accept", "application/json")
-	if bearer != "" {
-		req.Header.Set("Authorization", "Bearer "+bearer)
+	req, err := c.newRequest(ctx, "/api/v1/genres", nil, bearer)
+	if err != nil {
+		return nil, err
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
@@ -389,11 +410,9 @@ func (c *Client) ListGenres(ctx context.Context, bearer string) ([]string, error
 // ListSeriesEpisodes returns every episode under a given series, ordered
 // by season+episode. Used to render the Series detail page.
 func (c *Client) ListSeriesEpisodes(ctx context.Context, bearer, seriesID string) ([]Item, error) {
-	u := c.BaseURL + "/api/v1/series/" + url.PathEscape(seriesID) + "/episodes"
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	req.Header.Set("Accept", "application/json")
-	if bearer != "" {
-		req.Header.Set("Authorization", "Bearer "+bearer)
+	req, err := c.newRequest(ctx, "/api/v1/series/"+url.PathEscape(seriesID)+"/episodes", nil, bearer)
+	if err != nil {
+		return nil, err
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
@@ -429,15 +448,10 @@ func (c *Client) ListSimilar(ctx context.Context, bearer, itemID string, limit i
 	if limit <= 0 || limit > 50 {
 		limit = 12
 	}
-	u := c.BaseURL + "/api/v1/items/" + url.PathEscape(itemID) + "/similar" +
-		"?limit=" + strconv.Itoa(limit)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := c.newRequest(ctx, "/api/v1/items/"+url.PathEscape(itemID)+"/similar",
+		url.Values{"limit": {strconv.Itoa(limit)}}, bearer)
 	if err != nil {
 		return nil, err
-	}
-	req.Header.Set("Accept", "application/json")
-	if bearer != "" {
-		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
@@ -478,11 +492,9 @@ type Segment struct {
 
 // ListSegments returns the raw segments for an item, ordered by start time.
 func (c *Client) ListSegments(ctx context.Context, bearer, itemID string) ([]Segment, error) {
-	u := c.BaseURL + "/api/v1/items/" + url.PathEscape(itemID) + "/segments"
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	req.Header.Set("Accept", "application/json")
-	if bearer != "" {
-		req.Header.Set("Authorization", "Bearer "+bearer)
+	req, err := c.newRequest(ctx, "/api/v1/items/"+url.PathEscape(itemID)+"/segments", nil, bearer)
+	if err != nil {
+		return nil, err
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
