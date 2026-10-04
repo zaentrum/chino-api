@@ -2,7 +2,21 @@ openapi: 3.0.3
 info:
   title: chino-api
   version: 0.1.0
-  description: Backend API for the chino product of the zaentrum platform.
+  description: |
+    Backend API for the chino product of the zaentrum platform.
+
+    A viewer whose access token carries `max_rating`, a whole number of years
+    (a kid's account), is capped at that age; a claim that is no whole number
+    of years is the strictest cap, 0, and a token without it is not capped.
+    A capped viewer is served only the titles the catalog rates at most its
+    cap (an episode as its series, unless an admin rated it), and the unrated
+    ones only when the catalog's setting `ratings.unrated_for_capped` says
+    show. A title it may not be served is as one there is not: every route of
+    one title answers it 404 "not found", with its bearer and with its stream
+    token (which carries the cap of the bearer it was minted with), and the
+    lists (browse, search, people, continue watching, history, watchlists,
+    likes, the Zap feeds) leave it out. chino-api passes the cap on to the
+    catalog with every request.
 servers:
   - url: /api
 paths:
@@ -51,7 +65,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Item" }
         "404":
-          description: No such item
+          description: No such item, or one the viewer's rating cap does not allow
         "502":
           description: The catalog failed
   /v1/people:
@@ -642,6 +656,9 @@ components:
       in: path
       name: id
       required: true
+      description: >
+        A title's id. A capped viewer gets 404 for a title its cap does not
+        allow, as for an id of no title.
       schema: { type: string }
     Caps:
       in: query
@@ -723,6 +740,25 @@ components:
         year: { type: integer }
         poster_url: { type: string }
         backdrop_url: { type: string }
+        min_age:
+          type: integer
+          minimum: 0
+          maximum: 21
+          description: >
+            The age a viewer must be to be served the title: an admin's rating,
+            else (an episode) its series', else the minimum age its
+            certification means; omitted when nothing rates it, 0 sent.
+        certification:
+          type: string
+          description: >
+            The certification the age comes from, as TMDB gives it in its
+            country ("12" in DE is FSK 12); omitted when an admin rated the
+            title by hand, or nothing rates it.
+          example: PG-13
+        certification_country:
+          type: string
+          description: The certification's country, ISO 3166-1 alpha-2.
+          example: US
         genres:
           type: array
           items: { type: string }
@@ -802,4 +838,6 @@ components:
       type: apiKey
       in: query
       name: stream
-      description: a stream token from POST /api/v1/me/stream-token
+      description: >
+        a stream token from POST /api/v1/me/stream-token; a capped viewer's
+        carries its cap, signed with the rest

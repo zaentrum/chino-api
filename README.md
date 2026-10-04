@@ -45,6 +45,36 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `POST /api/v1/items/{id}/play/prewarm` | bearer JWT or stream token | warm the variant the client starts on |
 | `GET /api/v1/items/{id}/play/{vN\|aN\|sN}/playlist.m3u8` | bearer JWT or stream token | packaged video / audio / WebVTT rendition, its segments next to it |
 
+### Parental controls
+
+A viewer whose access token carries `max_rating`, a whole number of years, is
+capped at that age (a kid's account); a token without the claim is not, and a
+claim that is no whole number of years holds its viewer to the strictest cap,
+0 (chino-api says so once in its log). chino-api passes the cap to katalog-api
+as `max_rating` on every catalog request, so the lists, search, people,
+continue watching and history are served what the cap allows. A stream token
+minted for a capped viewer carries the cap in its user part
+(`<subject>;max_rating=<age>`, signed with the rest; chino-stream and
+katalog-manager verify it as before), so the media routes hold the viewer to
+it too.
+
+Every route of one title (detail, segments, more like this, subtitles, a
+series' episodes and next episode, artwork, playback, trickplay, a sidecar
+subtitle by the title it belongs to, and the viewer's own progress, watched,
+watchlist and like of the title) answers a capped viewer 404 "not found" for a
+title its cap does not allow, and for an id that names none, before anything
+goes upstream: it asks katalog-api's `GET /api/v1/visible`, kept for 30
+seconds. The lists chino-api keeps (watchlists and their counts, likes,
+memberships) and chino-stream's Zap feed and packaged ids leave such titles
+out. When katalog-api cannot say what a cap allows, a capped viewer is served
+nothing (502). A viewer without a cap is served as before. Items carry
+`min_age`, `certification` and `certification_country` as katalog-api sends
+them, for a badge.
+
+The tests of chino-api's own lists need a PostgreSQL in which they may create
+and drop schemas, named by `CHINO_API_TEST_DATABASE_URL`, and are skipped
+without it.
+
 ### Playback
 
 The play routes proxy chino-stream, query and all: the stream token, `caps`
