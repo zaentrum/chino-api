@@ -572,6 +572,70 @@ paths:
           description: Rate limited (5 reports / 10 min per user)
         "503":
           description: Feedback pipeline not configured (no OpenProject token)
+  /v1/admin/items/{id}/package:
+    description: >-
+      An admin's: the bearer must carry the admin role in its realm roles
+      (realm_access.roles; zaentrum-admin unless ADMIN_ROLE names another).
+      Both methods are forwarded to katalog-manager with the bearer, which
+      checks it again, and its answer comes back as it is. A stream token is
+      not taken.
+    parameters:
+      - $ref: "#/components/parameters/ItemID"
+    post:
+      summary: Package an item (katalog-manager's POST /api/items/{id}/package)
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: >-
+            The packaging is enqueued, or already under way: a movie's or an
+            episode's status, alreadyActive and message; a series' episodes
+            enqueued of its episodes, and message
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  alreadyActive: { type: boolean }
+                  episodesEnqueued: { type: integer }
+                  episodesTotal: { type: integer }
+                  message: { type: string }
+        "400":
+          description: The item cannot be packaged (not a movie, an episode or a series)
+        "401":
+          description: No bearer, or one that is not valid
+        "403":
+          description: The bearer does not carry the admin role
+        "404":
+          description: No such item
+        "502":
+          description: katalog-manager did not answer
+        "503":
+          description: No katalog-manager configured (KATALOG_MANAGER_URL)
+    get:
+      summary: An item's processing steps, to watch its packaging (katalog-manager's GET /api/analyze/items/{id}/steps)
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The item's steps by name, each with its status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  itemId: { type: string }
+                  steps:
+                    type: object
+                    additionalProperties: { type: string }
+                    example: { transcode: done, package: in_progress }
+        "401":
+          description: No bearer, or one that is not valid
+        "403":
+          description: The bearer does not carry the admin role
+        "502":
+          description: katalog-manager did not answer
+        "503":
+          description: No katalog-manager configured (KATALOG_MANAGER_URL)
 components:
   parameters:
     ItemID:
