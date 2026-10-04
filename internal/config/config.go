@@ -38,11 +38,15 @@ type Config struct {
 	// don't persist — keeps local dev simple.
 	PgURL string
 
-	// AnalyzerBaseURL is the in-cluster URL of katalog-analyzer. The
-	// admin packaging endpoint forwards POST/GET /api/v1/admin/items/
-	// {id}/package here as POST/GET /api/package/{id}. Cluster-internal
-	// only; no auth on the analyzer side beyond NetworkPolicy.
-	AnalyzerBaseURL string
+	// KatalogManagerURL is the in-cluster URL of katalog-manager, the
+	// catalog's writer. The admin packaging routes forward to it with the
+	// admin's bearer, which it checks itself: POST /api/v1/admin/items/{id}/
+	// package as POST /api/items/{id}/package, the GET as GET
+	// /api/analyze/items/{id}/steps. KATALOG_MANAGER_URL; when it is unset,
+	// ANALYZER_BASE_URL, its former name, which deployments point at
+	// katalog-manager; else http://katalog-manager-api, the service's name
+	// in the namespace.
+	KatalogManagerURL string
 
 	// PortalBaseURL is the in-cluster URL of portal-api. chino forwards the
 	// user's bearer to GET /api/portal/slots/{slot} to surface addon-contributed
@@ -109,6 +113,11 @@ type Config struct {
 	OpenProjectBugTypeID int
 }
 
+// DefaultKatalogManagerURL is katalog-manager's address when neither
+// KATALOG_MANAGER_URL nor ANALYZER_BASE_URL says one: its Service, in the
+// namespace chino-api runs in.
+const DefaultKatalogManagerURL = "http://katalog-manager-api"
+
 func Load() Config {
 	c := Config{
 		Addr:               envDefault("ADDR", ":8080"),
@@ -118,7 +127,7 @@ func Load() Config {
 		KatalogBaseURL:     envDefault("KATALOG_BASE_URL", "http://katalog-api.stube.svc.cluster.local"),
 		StreamBaseURL:      envDefault("STREAM_BASE_URL", "http://chino-stream.stube.svc.cluster.local"),
 		ArtworkBaseURL:     envDefault("ARTWORK_BASE_URL", "http://katalog-manager-api.stube.svc.cluster.local"),
-		AnalyzerBaseURL:    envDefault("ANALYZER_BASE_URL", "http://katalog-manager-api.stube.svc.cluster.local"),
+		KatalogManagerURL:  envDefault("KATALOG_MANAGER_URL", envDefault("ANALYZER_BASE_URL", DefaultKatalogManagerURL)),
 		PortalBaseURL:      envDefault("PORTAL_BASE_URL", "http://portal-api"),
 		AdminSubjects:      splitCSV(envDefault("ADMIN_SUBJECTS", "")),
 		PgURL:              envDefault("PG_URL", ""),

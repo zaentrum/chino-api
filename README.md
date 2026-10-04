@@ -91,7 +91,8 @@ Configured entirely through environment variables (see `internal/config`):
 | `OIDC_ISSUER` / `OIDC_AUDIENCE` / `OIDC_ENABLED` | OIDC JWT validation |
 | `KATALOG_BASE_URL` | catalog metadata service |
 | `STREAM_BASE_URL` | chino-stream (HLS / trickplay / play info) |
-| `ARTWORK_BASE_URL` / `ANALYZER_BASE_URL` | artwork + packaging admin surface |
+| `ARTWORK_BASE_URL` | katalog-manager, for artwork |
+| `KATALOG_MANAGER_URL` | katalog-manager, where the admin packaging routes go with the admin's bearer (default `http://katalog-manager-api`; `ANALYZER_BASE_URL`, its former name, is read when it is unset) |
 | `PG_URL` | Postgres URL for user-state (optional) |
 | `ADMIN_SUBJECTS` | comma-separated OIDC `sub` claims allowed on `/api/v1/admin/*` |
 | `OPENPROJECT_URL` / `OPENPROJECT_TOKEN` / `OPENPROJECT_PROJECT_ID` / `OPENPROJECT_BUG_TYPE_ID` | feedback pipeline (optional) |

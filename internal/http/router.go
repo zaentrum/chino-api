@@ -159,14 +159,13 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// reports surface errors in the dialog.
 			r.Post("/feedback", postFeedback(st, op))
 
-			// Admin: enqueue a packaging job for an item. The packager
-			// runs in katalog-analyzer; this endpoint just forwards the
-			// item id. Forwarded as POST /api/package/{id} to the
-			// analyzer's in-cluster service. Admin-role check is
-			// in-handler so we don't have to thread role-aware auth
-			// through the rest of the chain.
-			r.Post("/admin/items/{id}/package", postPackageRequest(cfg.KatalogBaseURL))
-			r.Get("/admin/items/{id}/package", getPackageStatus(cfg.KatalogBaseURL))
+			// Admin: an item's packaging, and its steps to watch it by,
+			// forwarded to katalog-manager (the catalog's writer, not the
+			// read-only katalog-api) with the admin's bearer
+			// (admin_package.go). The admin check is in the handlers, so
+			// the rest of the chain needs no role-aware auth.
+			r.Post("/admin/items/{id}/package", postPackageRequest(cfg.KatalogManagerURL))
+			r.Get("/admin/items/{id}/package", getPackageStatus(cfg.KatalogManagerURL))
 		})
 
 		// Live catalog stream (SSE), in its OWN group — the default

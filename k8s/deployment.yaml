@@ -78,10 +78,12 @@ spec:
             # delete the env var.
             - name: ARTWORK_BASE_URL
               value: "http://katalog-manager-api.stube.svc.cluster.local"
-            # ANALYZER_BASE_URL — admin packaging trigger forwards
-            # POST /api/v1/admin/items/{id}/package + step lookups to
-            # katalog-manager-api's AnalyzerController.
-            - name: ANALYZER_BASE_URL
+            # KATALOG_MANAGER_URL → katalog-manager-api, the catalog's
+            # writer: the admin packaging routes forward POST
+            # /api/v1/admin/items/{id}/package and the item's step lookup
+            # to it with the admin's bearer. ANALYZER_BASE_URL, its former
+            # name, is still read when this is unset.
+            - name: KATALOG_MANAGER_URL
               value: "http://katalog-manager-api.stube.svc.cluster.local"
             # Comma-separated Keycloak `sub` claims that may call
             # /api/v1/admin/* endpoints. Empty = nobody. Future: switch

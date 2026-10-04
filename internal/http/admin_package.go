@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/zaentrum/chino-api/internal/auth"
+	"github.com/zaentrum/chino-api/internal/redact"
 )
 
 // admin endpoints share a single allowlist check. Kept in a package
@@ -43,65 +44,60 @@ func requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 }
 
 // postPackageRequest forwards POST /api/v1/admin/items/{id}/package to
-// katalog-app's ItemActionsController.enqueuePackaging at
-// /api/items/{id}/package. That endpoint sets the item's transcode
-// step to 'pending', which the katalog-transcoder pod picks up via
-// SELECT ... FOR UPDATE SKIP LOCKED; once transcode finishes the
-// package step flips to 'pending' and the katalog-packager pods
-// (4 replicas) take it from there. No more in-memory queue, no more
-// single-worker bottleneck.
-//
-// Idempotent on the katalog side: re-POSTing for an item that's
-// already transcoding/packaging/done is a no-op and returns the
-// current status.
-func postPackageRequest(katalogBase string) http.HandlerFunc {
+// katalog-manager's POST /api/items/{id}/package, an admin's packaging action:
+// what its GraphQL packageItem does, the item's packaging enqueued. It answers
+// {status, alreadyActive, message} for a movie or an episode and
+// {episodesEnqueued, episodesTotal, message} for a series, 404 for an unknown
+// item and 400 for one that cannot be packaged; asking again for an item
+// whose packaging is under way changes nothing and says so.
+func postPackageRequest(managerBase string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !requireAdmin(w, r) {
 			return
 		}
 		id := chi.URLParam(r, "id")
-		proxyToKatalog(w, r, katalogBase, http.MethodPost, "/api/items/"+url.PathEscape(id)+"/package")
+		proxyToKatalogManager(w, r, managerBase, http.MethodPost, "/api/items/"+url.PathEscape(id)+"/package")
 	}
 }
 
-// getPackageStatus returns the step map for one item by forwarding to
-// katalog-app's GET /api/analyze/items/{id}/steps. Response is the
-// raw {step: status} map (e.g. {"transcode":"done","package":"in_progress"})
-// — clients poll this to watch an item move through the pipeline.
-func getPackageStatus(katalogBase string) http.HandlerFunc {
+// getPackageStatus forwards GET /api/v1/admin/items/{id}/package to
+// katalog-manager's GET /api/analyze/items/{id}/steps: the item's processing
+// steps, {"itemId": ..., "steps": {step: status}} (e.g. {"transcode":"done",
+// "package":"in_progress"}), which a client polls to watch an item move
+// through the pipeline.
+func getPackageStatus(managerBase string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !requireAdmin(w, r) {
 			return
 		}
 		id := chi.URLParam(r, "id")
-		proxyToKatalog(w, r, katalogBase, http.MethodGet, "/api/analyze/items/"+url.PathEscape(id)+"/steps")
+		proxyToKatalogManager(w, r, managerBase, http.MethodGet, "/api/analyze/items/"+url.PathEscape(id)+"/steps")
 	}
 }
 
-// proxyToKatalog forwards an admin request to katalog-app, carrying
-// the caller's bearer through. katalog-app is the resource server for
-// the same Keycloak realm, so the bearer the admin user sent us
-// validates there too — no service-account swap needed.
-func proxyToKatalog(w http.ResponseWriter, r *http.Request, base, method, path string) {
+// proxyToKatalogManager forwards an admin request to katalog-manager at
+// base, the caller's bearer with it: katalog-manager is a resource server of
+// the same realm and decides itself what the admin may do (its package
+// action is an admin's, its steps an admin's or the service account's). Its
+// answer comes back as it is, status, headers and body.
+func proxyToKatalogManager(w http.ResponseWriter, r *http.Request, base, method, path string) {
 	if base == "" {
-		http.Error(w, "katalog base not configured", http.StatusServiceUnavailable)
+		http.Error(w, "katalog-manager is not configured (KATALOG_MANAGER_URL)", http.StatusServiceUnavailable)
 		return
 	}
-	req, err := http.NewRequestWithContext(r.Context(), method, base+path, http.NoBody)
+	req, err := http.NewRequestWithContext(r.Context(), method, strings.TrimRight(base, "/")+path, http.NoBody)
 	if err != nil {
-		http.Error(w, "bad katalog url", http.StatusInternalServerError)
+		http.Error(w, "bad katalog-manager url", http.StatusInternalServerError)
 		return
 	}
-	// Forward the bearer. requireAdmin already validated it; the
-	// inbound Authorization header is either "Bearer <jwt>" or a
-	// ?token= we promoted earlier. Either way it lives on the
-	// inbound request and katalog-app accepts the same JWT shape.
-	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
-		req.Header.Set("Authorization", auth)
+	// The bearer requireAdmin's middleware verified: the header, or the
+	// deprecated ?token= it moved into the header.
+	if bearer := r.Header.Get("Authorization"); strings.HasPrefix(bearer, "Bearer ") {
+		req.Header.Set("Authorization", bearer)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		http.Error(w, "katalog upstream: "+err.Error(), http.StatusBadGateway)
+		http.Error(w, "katalog-manager upstream: "+redact.Text(err.Error()), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
