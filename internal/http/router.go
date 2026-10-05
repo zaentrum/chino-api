@@ -478,11 +478,22 @@ func subtitlesList(kc *katalog.Client) http.HandlerFunc {
 		}
 		subs := make([]katalog.Subtitle, 0, len(it.Subtitles))
 		for _, s := range it.Subtitles {
-			s.URL = "/api/v1/play/subs/" + s.ID + ".vtt"
-			subs = append(subs, s)
+			subs = append(subs, sidecarEntry(s))
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"subtitles": subs})
 	}
+}
+
+// sidecarEntry is a subtitle as the list gives it: with its URL, and with
+// the format the URL serves. chino-stream serves a SubRip file at its .vtt
+// URL as WebVTT, so a player, which picks its parser by the format, is told
+// webvtt for it.
+func sidecarEntry(s katalog.Subtitle) katalog.Subtitle {
+	s.URL = "/api/v1/play/subs/" + s.ID + ".vtt"
+	if strings.EqualFold(s.Format, "srt") {
+		s.Format = "webvtt"
+	}
+	return s
 }
 
 // proxySidecarSubtitle forwards GET /api/v1/play/subs/{id}.vtt to
