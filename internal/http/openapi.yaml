@@ -98,7 +98,7 @@ paths:
           description: OK
   /v1/items/{id}:
     get:
-      summary: An item with its genres, cast, subtitles, trailers and segments
+      summary: An item with its genres, cast, subtitles, trailers, extras and segments
       security: [{ bearerAuth: [] }]
       parameters:
         - in: path
@@ -582,6 +582,133 @@ paths:
           content:
             application/vnd.apple.mpegurl:
               schema: { type: string }
+  /v1/items/{id}/extras/{extraId}/play/master.m3u8:
+    get:
+      summary: The HLS master of one of a title's extras (its play_path)
+      description: >
+        An extra the item detail lists (a trailer, a teaser, a featurette, …)
+        plays from a package of its own, under its title's id. The master as
+        this client is served it, by the rules of a packaged title's master
+        (caps; q=<rung id> for one rung), every URI in it carrying the
+        request's query, so the stream token authorises each fetch. There is
+        no on-the-fly master: an extra is packaged H.264 and stereo AAC. 404
+        for a title the viewer's rating cap does not allow, as on every route
+        of the title, and for an extra that is not the title's or not
+        packaged. An extra has no progress, watched, segments, trickplay,
+        /play/info or /play/prewarm.
+      security: [{ bearerAuth: [] }, { streamToken: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+        - $ref: "#/components/parameters/ExtraID"
+        - $ref: "#/components/parameters/Caps"
+        - in: query
+          name: q
+          description: auto (default), or a rung id the master names (v0, v1) for that rung alone.
+          schema: { type: string, example: v1 }
+      responses:
+        "200":
+          description: The master playlist
+          content:
+            application/vnd.apple.mpegurl:
+              schema: { type: string }
+        "404":
+          description: No such extra of the title, or a title the viewer's rating cap does not allow
+  /v1/items/{id}/extras/{extraId}/play/{rendition}/playlist.m3u8:
+    get:
+      summary: A media playlist of an extra's rendition
+      description: vN video, aN audio, sN WebVTT subtitles (the URIs its master names).
+      security: [{ bearerAuth: [] }, { streamToken: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+        - $ref: "#/components/parameters/ExtraID"
+        - in: path
+          name: rendition
+          required: true
+          schema: { type: string, pattern: "^[vas][0-9]+$" }
+      responses:
+        "200":
+          description: The media playlist; its URIs carry the request's query
+          content:
+            application/vnd.apple.mpegurl:
+              schema: { type: string }
+        "404":
+          description: No such rendition or extra of the title
+  /v1/items/{id}/extras/{extraId}/play/{rendition}/init.mp4:
+    get:
+      summary: The init segment of an extra's video or audio rendition
+      security: [{ bearerAuth: [] }, { streamToken: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+        - $ref: "#/components/parameters/ExtraID"
+        - in: path
+          name: rendition
+          required: true
+          schema: { type: string, pattern: "^[va][0-9]+$" }
+      responses:
+        "200":
+          description: init.mp4
+          content:
+            video/mp4:
+              schema: { type: string, format: binary }
+  /v1/items/{id}/extras/{extraId}/play/{rendition}/seg-{n}.m4s:
+    get:
+      summary: A media segment of an extra's video or audio rendition (ranges accepted)
+      security: [{ bearerAuth: [] }, { streamToken: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+        - $ref: "#/components/parameters/ExtraID"
+        - in: path
+          name: rendition
+          required: true
+          schema: { type: string, pattern: "^[va][0-9]+$" }
+        - in: path
+          name: n
+          required: true
+          schema: { type: string, pattern: "^[0-9]+$", example: "00001" }
+      responses:
+        "200":
+          description: The segment
+          content:
+            video/iso.segment:
+              schema: { type: string, format: binary }
+  /v1/items/{id}/extras/{extraId}/play/{rendition}/seg-{n}.vtt:
+    get:
+      summary: A WebVTT segment of an extra's subtitle rendition (ranges accepted)
+      security: [{ bearerAuth: [] }, { streamToken: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+        - $ref: "#/components/parameters/ExtraID"
+        - in: path
+          name: rendition
+          required: true
+          schema: { type: string, pattern: "^s[0-9]+$" }
+        - in: path
+          name: n
+          required: true
+          schema: { type: string, pattern: "^[0-9]+$", example: "00001" }
+      responses:
+        "200":
+          description: The segment
+          content:
+            text/vtt:
+              schema: { type: string }
+  /v1/items/{id}/extras/{extraId}/play/{rendition}/iframes.m3u8:
+    get:
+      summary: The I-frame playlist of an extra's video rung
+      security: [{ bearerAuth: [] }, { streamToken: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+        - $ref: "#/components/parameters/ExtraID"
+        - in: path
+          name: rendition
+          required: true
+          schema: { type: string, pattern: "^v[0-9]+$" }
+      responses:
+        "200":
+          description: The I-frame playlist
+          content:
+            application/vnd.apple.mpegurl:
+              schema: { type: string }
   /v1/notices:
     get:
       summary: The signed-in person's notices — what addons told them — newest first
@@ -831,6 +958,15 @@ components:
         A title's id. A capped viewer gets 404 for a title its cap does not
         allow, as for an id of no title.
       schema: { type: string }
+    ExtraID:
+      in: path
+      name: extraId
+      required: true
+      description: >
+        The id of one of the title's extras, as the item detail lists it (a
+        UUID). Anything else is 404, and goes nowhere; so is an extra of
+        another title.
+      schema: { type: string, format: uuid }
     Caps:
       in: query
       name: caps
@@ -1021,11 +1157,69 @@ components:
             at most 20 actors and 10 people of every other role.
           type: array
           items: { $ref: "#/components/schemas/CastEntry" }
+        trailers:
+          description: >
+            The title's links to online videos, as the catalog has them: each
+            with its url, which a client opens outside the app. Nothing else
+            is in it (a trailer this server plays is in extras). Omitted when
+            there is none.
+          type: array
+          items: { $ref: "#/components/schemas/Trailer" }
+        extras:
+          description: >
+            On a movie or a series: its extras that play here (a trailer, a
+            teaser, a featurette, …, each a file of its own, packaged for
+            streaming), in the order a viewer sees them, each at its
+            play_path. Omitted when none plays, and while the catalog has no
+            extras yet.
+          type: array
+          items: { $ref: "#/components/schemas/Extra" }
         roles:
           description: on a person's filmography only, the person's roles on the item
           type: array
           items: { type: string }
         watched_at: { type: string, format: date-time }
+    Trailer:
+      type: object
+      required: [url]
+      description: A link to an online video of the title; every optional field is omitted when unknown.
+      properties:
+        site: { type: string, description: "the site the video is on", example: YouTube }
+        external_id: { type: string, description: "the video's id there" }
+        url: { type: string, description: "always sent; a client opens it outside the app" }
+        title: { type: string }
+    Extra:
+      type: object
+      required: [id, kind, title, local, play_path]
+      description: One extra of a movie or a series that plays here; every optional field is omitted when unknown.
+      properties:
+        id: { type: string, format: uuid, example: 1b5c2a8e-6f0d-4c3e-9a51-2d7f0c4b8e01 }
+        kind:
+          type: string
+          description: >
+            One of trailer, teaser, featurette, behind-the-scenes, making-of,
+            deleted-scene, interview, gag-reel, short, other. A client may
+            skip kinds it does not know.
+          example: trailer
+        title:
+          type: string
+          description: What a viewer sees, an admin's label else the title the extra was taken in with
+          example: Trailer
+        language: { type: string, description: "the language spoken in it, BCP 47", example: en }
+        duration_ms: { type: integer, example: 33000 }
+        season_number:
+          type: integer
+          minimum: 0
+          description: On a series' extra of one season only, that season (0 the specials)
+        local:
+          type: boolean
+          description: Always true; the extra plays from this server (a link to elsewhere is a trailer)
+        play_path:
+          type: string
+          description: >
+            Its HLS master on this server, asked for as a title's master is:
+            with ?stream=<a stream token> and &caps=<what the client decodes>.
+          example: /api/v1/items/9c4e7a12-3b5d-4f60-8a91-0e2d4c6b8f13/extras/1b5c2a8e-6f0d-4c3e-9a51-2d7f0c4b8e01/play/master.m3u8
     CastEntry:
       type: object
       required: [name, role]

@@ -29,7 +29,7 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `GET /api/v1/me` | bearer JWT | echoes the caller's `sub` |
 | `DELETE /api/v1/me` | bearer JWT (in the header) | deletes the signed-in person's data and their account ([below](#deleting-an-account)) |
 | `GET /api/v1/items` | bearer JWT | catalog browse |
-| `GET /api/v1/items/{id}` | bearer JWT | item detail, cast and crew by role |
+| `GET /api/v1/items/{id}` | bearer JWT | item detail, cast and crew by role, its trailers and extras |
 | `GET /api/v1/people` | bearer JWT | people search by name |
 | `GET /api/v1/people/{id}` | bearer JWT | a person, their details and filmography |
 | `GET /api/v1/people/{id}/profile` | bearer JWT or stream token | a person's portrait (`profile_url`) |
@@ -48,6 +48,8 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `GET /api/v1/items/{id}/play/master.m3u8` | bearer JWT or stream token | the HLS master for the client's `caps` and `q` |
 | `POST /api/v1/items/{id}/play/prewarm` | bearer JWT or stream token | warm the variant the client starts on |
 | `GET /api/v1/items/{id}/play/{vN\|aN\|sN}/playlist.m3u8` | bearer JWT or stream token | packaged video / audio / WebVTT rendition, its segments next to it |
+| `GET /api/v1/items/{id}/extras/{extraId}/play/master.m3u8` | bearer JWT or stream token | an extra's HLS master, its `play_path` ([below](#extras)) |
+| `GET /api/v1/items/{id}/extras/{extraId}/play/{vN\|aN\|sN}/playlist.m3u8` | bearer JWT or stream token | an extra's renditions, as a packaged title's |
 
 ### Parental controls
 
@@ -154,6 +156,52 @@ package has; `q=<name>` from `/play/info`'s `qualities` serves one rung, `auto`
 chino-stream's README and in the spec (`PlayInfo`, `PlayQuality`). A quality
 menu shows `qualities` when it has two or more entries, by `label`, and
 reloads the master with `q=<name>`.
+
+### Extras
+
+A movie's or a series' extras - its trailers, teasers, featurettes and other
+bonus material, each a file of its own that the catalog has packaged for
+streaming - come with its detail, `GET /api/v1/items/{id}`, beside
+`trailers`, in the order a viewer sees them:
+
+```json
+{
+  "id": "9c4e7a12-3b5d-4f60-8a91-0e2d4c6b8f13", "type": "movie", "title": "A Film",
+  "trailers": [{"site": "YouTube", "external_id": "x1", "url": "https://www.youtube.com/watch?v=x1", "title": "Official Trailer"}],
+  "extras": [
+    {"id": "1b5c2a8e-6f0d-4c3e-9a51-2d7f0c4b8e01", "kind": "trailer", "title": "Trailer", "language": "en",
+     "duration_ms": 33000, "local": true,
+     "play_path": "/api/v1/items/9c4e7a12-3b5d-4f60-8a91-0e2d4c6b8f13/extras/1b5c2a8e-6f0d-4c3e-9a51-2d7f0c4b8e01/play/master.m3u8"}
+  ]
+}
+```
+
+- `trailers` stays what it was: the title's links to online videos, `url` and
+  all. Installed clients read every entry as such a link (mobile and TV need
+  `url`, every client opens it outside the app), so a trailer this server
+  plays is never in it: it is an extra.
+- An extra is `id`, `kind` (trailer, teaser, featurette, behind-the-scenes,
+  making-of, deleted-scene, interview, gag-reel, short, other; a client skips
+  kinds it does not know), `title` and, when known, `language` and
+  `duration_ms`; a series' extra of one season has `season_number` (0 the
+  specials). `local` is always `true`. `extras` is omitted when none plays, and
+  while the catalog has no extras yet.
+- `play_path` is the extra's HLS master. A client asks for it as for a title's
+  master, with `?stream=<token>&caps=<caps>` (`q=<rung id>` for one rung), and
+  the master's URIs carry the query on. chino-stream serves it from the
+  extra's package, H.264 and stereo AAC with nothing made on the fly, and only
+  under its own title; its routes are in the spec.
+- The routes of a title's extras hold a capped viewer to the title's rating:
+  the 404 of the title there too.
+- An extra has no progress, watched, segments, trickplay, `/play/info` or
+  `/play/prewarm`: a player of extras sends none of them, and Continue
+  Watching is not touched.
+- When an extra is packaged, `GET /api/v1/events` sends its title a note,
+  phase `extra.packaged`, and the detail lists it on the next fetch. The
+  extras' topic (`<prefix>catalog.extra.packaged`) is tailed by a consumer
+  group of its own once it exists on the cluster, asked every minute until
+  then, so a cluster not provisioned for extras yet loses none of the other
+  notes.
 
 ## Local development
 
