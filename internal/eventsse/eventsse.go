@@ -4,6 +4,7 @@
 // broker; each connected client receives them on GET /api/v1/events. Events are
 // notifications, not data — {type, itemId, itemType, phase} — the SPA debounces
 // and refetches its own queries, so nothing here couples to the catalog schema.
+// A title's extra packaged is a note for the title, phase "extra.packaged".
 //
 // Everything is defensive: no brokers configured => the broker is inert (the
 // endpoint still serves, clients just only get heartbeats), and consumer errors
@@ -29,10 +30,10 @@ import (
 	kafka "github.com/segmentio/kafka-go"
 )
 
-// catalogTopics derives the pipeline topic names from the tenant prefix
-// (mirrors katalog-manager's events.Configure — a shared cluster hosts multiple
-// platform instances, each under its own prefix).
-func catalogTopics(prefix string) []string {
+// tenantPrefix is the tenant prefix with its dot, "stube." when there is none
+// (mirrors katalog-manager's events.Configure — a shared cluster hosts
+// multiple platform instances, each under its own prefix).
+func tenantPrefix(prefix string) string {
 	p := strings.TrimSpace(prefix)
 	if p == "" {
 		p = "stube."
@@ -40,6 +41,12 @@ func catalogTopics(prefix string) []string {
 	if !strings.HasSuffix(p, ".") {
 		p += "."
 	}
+	return p
+}
+
+// catalogTopics derives the pipeline topic names from the tenant prefix.
+func catalogTopics(prefix string) []string {
+	p := tenantPrefix(prefix)
 	return []string{
 		p + "catalog.item.discovered",
 		p + "catalog.item.enriched",
@@ -50,10 +57,44 @@ func catalogTopics(prefix string) []string {
 	}
 }
 
+// extraTopic is the topic of a title's extras (a trailer, a featurette, …)
+// packaged: the title's detail lists one more. Its events name the title
+// (itemId, type), as the item events do. It is tailed apart from the item
+// topics, once it exists (Run).
+func extraTopic(prefix string) string {
+	return tenantPrefix(prefix) + "catalog.extra.packaged"
+}
+
+// phaseOf is a note's phase for a message of topic: the step that happened,
+// the topic's last part ("packaged"), and for a topic of a title's extras
+// "extra." before it ("extra.packaged") — an extra packaged is not its title
+// packaged.
+func phaseOf(topic string) string {
+	parts := strings.Split(topic, ".")
+	phase := parts[len(parts)-1]
+	if len(parts) >= 2 && parts[len(parts)-2] == "extra" {
+		return "extra." + phase
+	}
+	return phase
+}
+
+// noteOf is the note for a message of topic with the pipeline envelope
+// value; false when value is no envelope.
+func noteOf(topic string, value []byte) (Note, bool) {
+	var ev itemEvent
+	if json.Unmarshal(value, &ev) != nil {
+		return Note{}, false
+	}
+	return Note{ItemID: ev.ItemID, ItemType: ev.Type, Phase: phaseOf(topic)}, true
+}
+
 const (
 	heartbeatEvery = 20 * time.Second
 	clientBuffer   = 16
 	groupPrefix    = "chino-events"
+	// topicPollEvery is how often Run asks whether the extras' topic
+	// exists, until it does.
+	topicPollEvery = time.Minute
 )
 
 // Note is the thin notification sent to browsers.
@@ -160,12 +201,17 @@ func (b *Broker) Handler(w http.ResponseWriter, r *http.Request) {
 // Run consumes the catalog topics into the broker until ctx is cancelled.
 // brokers empty => logged no-op. The group is unique per pod so every replica
 // sees every event (each fans out only to its own connected clients).
+//
+// The extras' topic has a group of its own, started once the topic exists: a
+// cluster that has no such topic yet (one not provisioned for extras) would
+// leave a group that names it with no partition of any of its topics —
+// kafka-go reads them in one metadata request and drops them all when one is
+// unknown — and the item notes would stop.
 func (b *Broker) Run(ctx context.Context, brokers []string, certDir, topicPrefix string) {
 	if len(brokers) == 0 {
 		slog.Info("eventsse: no Kafka brokers configured; live refresh inactive")
 		return
 	}
-	topics := catalogTopics(topicPrefix)
 	tlsCfg, err := maybeTLS(certDir)
 	if err != nil {
 		slog.Warn("eventsse: kafka TLS material unreadable; consumer not started", "err", err)
@@ -176,16 +222,73 @@ func (b *Broker) Run(ctx context.Context, brokers []string, certDir, topicPrefix
 	if host == "" {
 		host = "unknown"
 	}
+	extras := extraTopic(topicPrefix)
+	go func() {
+		exists := func(ctx context.Context) (bool, error) { return topicExists(ctx, dialer, brokers, extras) }
+		if waitForTopic(ctx, topicPollEvery, extras, exists) {
+			b.tail(ctx, dialer, brokers, groupPrefix+"-extras-"+host, []string{extras})
+		}
+	}()
+	b.tail(ctx, dialer, brokers, groupPrefix+"-"+host, catalogTopics(topicPrefix))
+}
+
+// waitForTopic asks exists every interval until it says topic exists (true)
+// or ctx ends (false). It says once that it waits.
+func waitForTopic(ctx context.Context, every time.Duration, topic string, exists func(context.Context) (bool, error)) bool {
+	said := false
+	for {
+		ok, err := exists(ctx)
+		if ok {
+			return true
+		}
+		if !said {
+			slog.Info("eventsse: topic not there yet; asked again every "+every.String(), "topic", topic, "err", err)
+			said = true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(every):
+		}
+	}
+}
+
+// topicExists asks the first broker that answers whether topic has
+// partitions. A topic the cluster does not know is no error.
+func topicExists(ctx context.Context, dialer *kafka.Dialer, brokers []string, topic string) (bool, error) {
+	var lastErr error
+	for _, addr := range brokers {
+		conn, err := dialer.DialContext(ctx, "tcp", addr)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		partitions, err := conn.ReadPartitions(topic)
+		_ = conn.Close()
+		if errors.Is(err, kafka.UnknownTopicOrPartition) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return len(partitions) > 0, nil
+	}
+	return false, lastErr
+}
+
+// tail consumes topics with the consumer group group into the broker until
+// ctx is cancelled.
+func (b *Broker) tail(ctx context.Context, dialer *kafka.Dialer, brokers []string, group string, topics []string) {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        brokers,
-		GroupID:        groupPrefix + "-" + host,
+		GroupID:        group,
 		GroupTopics:    topics,
 		Dialer:         dialer,
 		StartOffset:    kafka.LastOffset,
 		CommitInterval: 10 * time.Second,
 	})
 	defer reader.Close()
-	slog.Info("eventsse: kafka tail active", "topics", len(topics))
+	slog.Info("eventsse: kafka tail active", "topics", len(topics), "group", group)
 
 	for {
 		msg, err := reader.ReadMessage(ctx)
@@ -201,15 +304,9 @@ func (b *Broker) Run(ctx context.Context, brokers []string, certDir, topicPrefix
 			}
 			continue
 		}
-		var ev itemEvent
-		if json.Unmarshal(msg.Value, &ev) != nil {
-			continue
+		if note, ok := noteOf(msg.Topic, msg.Value); ok {
+			b.Publish(note)
 		}
-		phase := msg.Topic
-		if i := strings.LastIndex(phase, "."); i >= 0 {
-			phase = phase[i+1:]
-		}
-		b.Publish(Note{ItemID: ev.ItemID, ItemType: ev.Type, Phase: phase})
 	}
 }
 
