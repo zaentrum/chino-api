@@ -105,6 +105,7 @@ type Item struct {
 	Cast      []CastEntry `json:"cast,omitempty"`
 	Subtitles []Subtitle  `json:"subtitles,omitempty"`
 	Trailers  []Trailer   `json:"trailers,omitempty"`
+	Extras    []Extra     `json:"extras,omitempty"`
 	Segments  *SegSummary `json:"segments,omitempty"`
 
 	// WatchedAt is set by chino-api (not katalog) when the current user
@@ -148,11 +149,46 @@ type Subtitle struct {
 	URL string `json:"url,omitempty"`
 }
 
+// Trailer is one of the item's links to an online video, as katalog-api
+// sends it. Installed clients read every entry as such a link: mobile and TV
+// decode url as required (an entry without one fails the whole item), and
+// every client opens a trailer's url outside the app. So nothing but these
+// links goes here; a trailer this server plays is an Extra.
 type Trailer struct {
 	Site       string `json:"site,omitempty"`
 	ExternalID string `json:"external_id,omitempty"`
 	URL        string `json:"url"`
 	Title      string `json:"title,omitempty"`
+}
+
+// Extra is one of a movie's or a series' extras that plays: a trailer, a
+// teaser, a featurette, … that is a file of its own, packaged for streaming
+// apart from the title (katalog-api's include=extras), in the order a viewer
+// sees them. ID, Kind (trailer, teaser, featurette, behind-the-scenes,
+// making-of, deleted-scene, interview, gag-reel, short, other), Title,
+// Language (BCP 47) and DurationMs are katalog-api's; SeasonNumber is set on
+// a series' extra of one season (0 the specials).
+//
+// PlayPath is synthesised by chino-api, as PosterURL is: the extra's HLS
+// master, /api/v1/items/{id}/extras/{extraId}/play/master.m3u8, which a
+// client asks for as it asks for a title's master (?stream=<token>,
+// &caps=). Local is always true: an extra plays from this server, where a
+// Trailer is a link to elsewhere.
+type Extra struct {
+	ID           string `json:"id"`
+	Kind         string `json:"kind"`
+	Title        string `json:"title"`
+	Language     string `json:"language,omitempty"`
+	DurationMs   int64  `json:"duration_ms,omitempty"`
+	SeasonNumber *int   `json:"season_number,omitempty"`
+	Local        bool   `json:"local"`
+	PlayPath     string `json:"play_path"`
+}
+
+// extraPlayPath is the path of the HLS master of the extra extraID of the
+// title itemID on chino-api.
+func extraPlayPath(itemID, extraID string) string {
+	return "/api/v1/items/" + url.PathEscape(itemID) + "/extras/" + url.PathEscape(extraID) + "/play/master.m3u8"
 }
 
 type SegSummary struct {
@@ -188,10 +224,23 @@ type upstreamItem struct {
 	Cast      []CastEntry             `json:"cast,omitempty"`
 	Subtitles []Subtitle              `json:"subtitles,omitempty"`
 	Trailers  []Trailer               `json:"trailers,omitempty"`
+	Extras    []upstreamExtra         `json:"extras,omitempty"`
 	Segments  *upstreamSegmentSummary `json:"segments,omitempty"`
 
 	// Populated only on GET /people/{id}'s filmography.
 	Roles []string `json:"roles,omitempty"`
+}
+
+// upstreamExtra is one of an item's extras as katalog-api sends it; the list
+// is absent when the item has none, and from a katalog-api or a catalog that
+// knows no extras yet.
+type upstreamExtra struct {
+	ID           string `json:"id"`
+	Kind         string `json:"kind"`
+	Title        string `json:"title"`
+	Language     string `json:"language"`
+	DurationMs   int64  `json:"duration_ms"`
+	SeasonNumber *int   `json:"season_number"`
 }
 
 type upstreamSegmentSummary struct {
@@ -233,6 +282,19 @@ func (u upstreamItem) toItem() Item {
 			HasCredits: u.Segments.HasCredits,
 			HasRecap:   u.Segments.HasRecap,
 		}
+	}
+	// Each extra plays at its play path, built as the poster's URL is.
+	for _, e := range u.Extras {
+		it.Extras = append(it.Extras, Extra{
+			ID:           e.ID,
+			Kind:         e.Kind,
+			Title:        e.Title,
+			Language:     e.Language,
+			DurationMs:   e.DurationMs,
+			SeasonNumber: e.SeasonNumber,
+			Local:        true,
+			PlayPath:     extraPlayPath(u.ID, e.ID),
+		})
 	}
 	// The cast passes through as katalog-api orders and caps it: role by
 	// role, billing order within a role, at most 20 actors and 10 people
@@ -363,11 +425,12 @@ func (c *Client) GetItem(ctx context.Context, bearer, id string) (*Item, error) 
 }
 
 // GetItemDetail returns the item plus its rich associations
-// (genres, cast, subtitles, trailers, segments summary). Single REST
-// call — the old four-set OData hop is gone because katalog-api keys
-// off the unified items table.
+// (genres, cast, subtitles, trailers, extras, segments summary). Single
+// REST call — the old four-set OData hop is gone because katalog-api keys
+// off the unified items table. A katalog-api that knows no extras ignores
+// the token, and the item has none.
 func (c *Client) GetItemDetail(ctx context.Context, bearer, id string) (*Item, error) {
-	return c.getItem(ctx, bearer, id, "genres,cast,subtitles,trailers,segments")
+	return c.getItem(ctx, bearer, id, "genres,cast,subtitles,trailers,extras,segments")
 }
 
 func (c *Client) getItem(ctx context.Context, bearer, id, include string) (*Item, error) {

@@ -1,12 +1,16 @@
 package http
 
 import (
+	"encoding/json"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/zaentrum/chino-api/internal/auth"
+	"github.com/zaentrum/chino-api/internal/config"
+	"github.com/zaentrum/chino-api/internal/eventsse"
 )
 
 // testExtra is an extra's id, a UUID as katalog-manager gives them.
@@ -141,5 +145,59 @@ func TestACappedViewerGets404OnTheExtrasOfATitleAboveItsCap(t *testing.T) {
 				t.Errorf("%s for the %s viewer: %d %q, chino-stream got %q", path, tc.viewer, w.Code, w.Body, got)
 			}
 		}
+	}
+}
+
+// A title's detail lists its extras beside its trailers, as the clients read
+// it: each extra as katalog-api sends it, with local: true and the play_path
+// of its master here; the trailers the links to online videos they were, url
+// and all. An extra's play_path plays: it is the extra's master on
+// chino-stream. A title without extras has no extras field.
+func TestItemDetailListsTheExtrasBesideTheTrailers(t *testing.T) {
+	const trailers = `[{"site":"YouTube","external_id":"x1","url":"https://www.youtube.com/watch?v=x1","title":"Official Trailer"}]`
+	kat := newFake(t, map[string]string{
+		"/api/v1/items/m1": `{"id":"m1","type":"movie","title":"A Film","trailers":` + trailers + `,
+			"extras":[{"id":"` + testExtra + `","kind":"trailer","title":"Trailer","language":"en","duration_ms":33000}]}`,
+		"/api/v1/items/m2": `{"id":"m2","type":"movie","title":"Another Film","trailers":` + trailers + `}`,
+	})
+	stream := newFake(t, map[string]string{"/api/play/m1/extras/" + testExtra + "/master.m3u8": "#EXTM3U\n"})
+	h, err := NewRouter(config.Config{
+		OIDCIssuer: "http://127.0.0.1:1/realms/none", OIDCAudience: "chino-web", OIDCEnabled: false,
+		KatalogBaseURL: kat.URL, ArtworkBaseURL: "http://katalog-manager.invalid", StreamBaseURL: stream.URL,
+		StreamSigningKey: signingKey,
+	}, nil, eventsse.NewBroker())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w := do(h, "GET", "/api/v1/items/m1", nil)
+	var detail map[string]json.RawMessage
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &detail) != nil {
+		t.Fatalf("detail: %d %s", w.Code, w.Body)
+	}
+	playPath := "/api/v1/items/m1/extras/" + testExtra + "/play/master.m3u8"
+	for field, want := range map[string]string{
+		"trailers": trailers,
+		"extras": `[{"id":"` + testExtra + `","kind":"trailer","title":"Trailer","language":"en","duration_ms":33000,
+			"local":true,"play_path":"` + playPath + `"}]`,
+	} {
+		var got, wantJSON any
+		if err := json.Unmarshal(detail[field], &got); err != nil {
+			t.Fatalf("%s: %v in %s", field, err, w.Body)
+		}
+		if err := json.Unmarshal([]byte(want), &wantJSON); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got, wantJSON) {
+			t.Errorf("%s:\n got %s\nwant %s", field, detail[field], want)
+		}
+	}
+	if w := do(h, "GET", playPath+"?caps=avc,aac", nil); w.Code != http.StatusOK || w.Body.String() != "#EXTM3U\n" {
+		t.Errorf("the play_path: %d %q", w.Code, w.Body)
+	}
+
+	w = do(h, "GET", "/api/v1/items/m2", nil)
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), `"extras"`) || !strings.Contains(w.Body.String(), `"trailers"`) {
+		t.Errorf("a title without extras: %d %s", w.Code, w.Body)
 	}
 }

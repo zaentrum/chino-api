@@ -92,7 +92,7 @@ func TestEveryCatalogRequestCarriesTheCap(t *testing.T) {
 	}
 	// The rest of a query stays as it was.
 	_ = catalogCalls["/api/v1/items/m1"](c, auth.WithMaxRating(context.Background(), 6))
-	if q := up.last(t).URL.Query(); q.Get("include") != "genres,cast,subtitles,trailers,segments" {
+	if q := up.last(t).URL.Query(); q.Get("include") != "genres,cast,subtitles,trailers,extras,segments" {
 		t.Errorf("an item's include: %q", q.Get("include"))
 	}
 	_ = catalogCalls["/api/v1/people/p1"](c, auth.WithMaxRating(context.Background(), 6))

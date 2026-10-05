@@ -104,3 +104,60 @@ func itoa(n int) string {
 	b, _ := json.Marshal(n)
 	return string(b)
 }
+
+// An item's extras come through as katalog-api sends them, in its order, each
+// with the path of its master on chino-api and local: true; a series' extra of
+// the specials keeps its season 0. The trailers beside them stay the links
+// they were, url and all. An item without extras, and the answer of a
+// katalog-api that knows none, have no extras field at all.
+func TestItemDetailCarriesTheExtrasWithTheirPlayPath(t *testing.T) {
+	const trailers = `[{"site":"YouTube","external_id":"x1","url":"https://www.youtube.com/watch?v=x1","title":"Official Trailer"}]`
+	up := newUpstream(t, map[string]string{
+		"/api/v1/items/m1": `{"id":"m1","type":"movie","title":"A Film","trailers":` + trailers + `,"extras":[
+			{"id":"1b5c2a8e-6f0d-4c3e-9a51-2d7f0c4b8e01","kind":"trailer","title":"Trailer","language":"en","duration_ms":33000},
+			{"id":"1b5c2a8e-6f0d-4c3e-9a51-2d7f0c4b8e02","kind":"teaser","title":"Teaser"}]}`,
+		"/api/v1/items/s1": `{"id":"s1","type":"series","title":"A Show","extras":[
+			{"id":"1b5c2a8e-6f0d-4c3e-9a51-2d7f0c4b8e04","kind":"featurette","title":"Specials","duration_ms":61000,"season_number":0}]}`,
+		"/api/v1/items/m2": `{"id":"m2","type":"movie","title":"Another Film","trailers":` + trailers + `}`,
+	})
+	kc := New(up.URL)
+
+	it, err := kc.GetItemDetail(context.Background(), "tok", "m1")
+	if err != nil || it == nil {
+		t.Fatalf("item detail: %v, %v", it, err)
+	}
+	if q := up.last(t).URL.Query().Get("include"); !strings.Contains(","+q+",", ",extras,") {
+		t.Errorf("include %q, want the extras asked for", q)
+	}
+	sameJSON(t, "extras", it.Extras, `[
+		{"id":"1b5c2a8e-6f0d-4c3e-9a51-2d7f0c4b8e01","kind":"trailer","title":"Trailer","language":"en","duration_ms":33000,
+		 "local":true,"play_path":"/api/v1/items/m1/extras/1b5c2a8e-6f0d-4c3e-9a51-2d7f0c4b8e01/play/master.m3u8"},
+		{"id":"1b5c2a8e-6f0d-4c3e-9a51-2d7f0c4b8e02","kind":"teaser","title":"Teaser",
+		 "local":true,"play_path":"/api/v1/items/m1/extras/1b5c2a8e-6f0d-4c3e-9a51-2d7f0c4b8e02/play/master.m3u8"}]`)
+	sameJSON(t, "trailers", it.Trailers, trailers)
+
+	it, err = kc.GetItemDetail(context.Background(), "tok", "s1")
+	if err != nil || it == nil {
+		t.Fatalf("series detail: %v, %v", it, err)
+	}
+	sameJSON(t, "a series' extras", it.Extras, `[{"id":"1b5c2a8e-6f0d-4c3e-9a51-2d7f0c4b8e04","kind":"featurette",
+		"title":"Specials","duration_ms":61000,"season_number":0,"local":true,
+		"play_path":"/api/v1/items/s1/extras/1b5c2a8e-6f0d-4c3e-9a51-2d7f0c4b8e04/play/master.m3u8"}]`)
+
+	it, err = kc.GetItemDetail(context.Background(), "tok", "m2")
+	if err != nil || it == nil {
+		t.Fatalf("item detail: %v, %v", it, err)
+	}
+	raw, err := json.Marshal(it)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fields["extras"]; ok {
+		t.Errorf("an item without extras: %s", raw)
+	}
+	sameJSON(t, "trailers without extras", it.Trailers, trailers)
+}

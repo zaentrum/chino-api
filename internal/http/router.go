@@ -528,9 +528,11 @@ func similarItems(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 }
 
 // itemDetail fetches a single item from katalog, with rich associations
-// expanded (genres, cast, subtitles, trailers, segments summary) so the
-// detail page renders without follow-up fetches. The player page can
-// safely call this too — the extra fields are small.
+// expanded (genres, cast, subtitles, trailers, extras, segments summary) so
+// the detail page renders without follow-up fetches. The player page can
+// safely call this too — the extra fields are small. trailers are the links
+// to online videos installed clients know; the extras, each with the
+// play_path of its master here, are beside them, never in them.
 func itemDetail(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
