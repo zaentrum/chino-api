@@ -122,6 +122,15 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// Empty for a no-addon instance.
 			r.Get("/extensions", listExtensions(pc))
 
+			// Notices addons left the signed-in person, kept by portal-api
+			// and forwarded with their bearer — best effort, like the slots:
+			// the list is empty, with available false, when portal-api does
+			// not answer (notices.go).
+			r.Get("/notices", listNotices(pc))
+			r.Post("/notices/read-all", readAllNotices(pc))
+			r.Post("/notices/{noticeId}/read", readNotice(pc))
+			r.Delete("/notices/{noticeId}", deleteNotice(pc))
+
 			// User-state endpoints (chino-api owns these, not katalog-stream).
 			// Resume position: GET returns the last saved second; POST writes
 			// it. The player calls POST every ~10s while watching and GET

@@ -3,8 +3,10 @@
 // /api/portal/slots/{slot} so addon-contributed buttons can be surfaced
 // natively in the SPA, best-effort: an unset base URL or an unreachable portal
 // yields an empty slice, so an instance with no addon shows no extension UI
-// (and chino never hard-depends on the portal being up) — and the one call
-// account deletion makes, DELETE /api/portal/me.
+// (and chino never hard-depends on the portal being up) — the notices addons
+// leave the signed-in person (/api/portal/me/notices, with their bearer, as
+// best effort as the slots), and the one call account deletion makes, DELETE
+// /api/portal/me.
 package portal
 
 import (
@@ -138,4 +140,124 @@ func (c *Client) SlotExtensions(ctx context.Context, slot, bearer string) []Exte
 		return nil
 	}
 	return out
+}
+
+// Notice mirrors portal-api's model.Notice: what an addon told the
+// signed-in person. Its text is the addon's plain text; link and itemId are
+// "" for none, readAt null while unread. Times pass through as portal-api
+// writes them (RFC 3339).
+type Notice struct {
+	ID         string  `json:"id"`
+	Addon      string  `json:"addon"`
+	AddonTitle string  `json:"addonTitle"`
+	AddonIcon  string  `json:"addonIcon"`
+	Title      string  `json:"title"`
+	Body       string  `json:"body"`
+	Link       string  `json:"link"`
+	ItemID     string  `json:"itemId"`
+	CreatedAt  string  `json:"createdAt"`
+	ReadAt     *string `json:"readAt"`
+}
+
+// NoticeList is the signed-in person's notices, newest first, and how many
+// of theirs are unread.
+type NoticeList struct {
+	Notices []Notice `json:"notices"`
+	Unread  int      `json:"unread"`
+}
+
+// Notices' answers to a change.
+var (
+	// ErrNoNotice: the person has no notice of that id — someone else's is
+	// as one there is not.
+	ErrNoNotice = errors.New("no such notice")
+	// ErrNoticesUnavailable: portal-api did not answer, or not as it does.
+	ErrNoticesUnavailable = errors.New("portal-api did not change the notice")
+)
+
+// Notices is the signed-in person's notices, read from portal-api with their
+// bearer. ok is false — and the list empty — when there is no portal-api to
+// ask, or it did not answer as it does: the caller shows none, and never
+// fails for it.
+func (c *Client) Notices(ctx context.Context, bearer string) (list NoticeList, ok bool) {
+	empty := NoticeList{Notices: []Notice{}}
+	if !c.Enabled() || bearer == "" {
+		return empty, false
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/api/portal/me/notices", nil)
+	if err != nil {
+		return empty, false
+	}
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return empty, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return empty, false
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&list); err != nil {
+		return empty, false
+	}
+	if list.Notices == nil {
+		list.Notices = []Notice{}
+	}
+	return list, true
+}
+
+// ReadNotice marks one of the person's notices read, and answers how many of
+// theirs are unread still.
+func (c *Client) ReadNotice(ctx context.Context, bearer, id string) (int, error) {
+	var out struct {
+		Unread int `json:"unread"`
+	}
+	err := c.changeNotice(ctx, bearer, http.MethodPost, "/api/portal/me/notices/"+url.PathEscape(id)+"/read", &out)
+	return out.Unread, err
+}
+
+// ReadAllNotices marks every notice of the person read, and answers how
+// many it marked.
+func (c *Client) ReadAllNotices(ctx context.Context, bearer string) (int, error) {
+	var out struct {
+		Read int `json:"read"`
+	}
+	err := c.changeNotice(ctx, bearer, http.MethodPost, "/api/portal/me/notices/read-all", &out)
+	return out.Read, err
+}
+
+// DeleteNotice deletes one of the person's notices.
+func (c *Client) DeleteNotice(ctx context.Context, bearer, id string) error {
+	return c.changeNotice(ctx, bearer, http.MethodDelete, "/api/portal/me/notices/"+url.PathEscape(id), nil)
+}
+
+// changeNotice sends a change of the person's notices with their bearer and
+// reads what portal-api answers into out: ErrNoNotice for a notice they do
+// not have, ErrNoticesUnavailable for anything but an answer.
+func (c *Client) changeNotice(ctx context.Context, bearer, method, path string, out any) error {
+	if !c.Enabled() || bearer == "" {
+		return ErrNoticesUnavailable
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrNoticesUnavailable, err)
+	}
+	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode == http.StatusNotFound:
+		return ErrNoNotice
+	case resp.StatusCode < 200 || resp.StatusCode > 299:
+		return fmt.Errorf("%w: it answered %d", ErrNoticesUnavailable, resp.StatusCode)
+	case out == nil:
+		return nil
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(out); err != nil {
+		return fmt.Errorf("%w: %v", ErrNoticesUnavailable, err)
+	}
+	return nil
 }
