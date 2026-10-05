@@ -2,6 +2,7 @@ package http
 
 import (
 	"net/http"
+	"regexp"
 
 	"github.com/go-chi/chi/v5"
 
@@ -140,5 +141,55 @@ func proxyTrickplaySprite(kc *katalog.Client) http.HandlerFunc {
 		id := chi.URLParam(r, "id")
 		n := chi.URLParam(r, "n")
 		kc.ProxyStream(w, r, "/api/play/"+id+"/trickplay/sprite-"+n+".jpg", bearerFrom(r))
+	}
+}
+
+// extraID is what an extra's id may be on the way to chino-stream: a UUID,
+// as katalog-manager gives them, so nothing that reads as more than one path
+// segment is forwarded. The parameter is extraId; {id} is the title's, which
+// the parental gate checks.
+var extraID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// extraUpstream is chino-stream's path of the extra r names,
+// /api/play/{id}/extras/{extraId}, or "" when the extra's id is no UUID,
+// which it has answered 404 without asking chino-stream.
+func extraUpstream(w http.ResponseWriter, r *http.Request) string {
+	extra := chi.URLParam(r, "extraId")
+	if !extraID.MatchString(extra) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return ""
+	}
+	return "/api/play/" + chi.URLParam(r, "id") + "/extras/" + extra
+}
+
+// proxyExtra forwards /api/v1/items/{id}/extras/{extraId}/play/<leaf> (the
+// master) to chino-stream's /api/play/{id}/extras/{extraId}/<leaf>.
+func proxyExtra(kc *katalog.Client, leaf string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if base := extraUpstream(w, r); base != "" {
+			kc.ProxyStream(w, r, base+"/"+leaf, bearerFrom(r))
+		}
+	}
+}
+
+// proxyExtraRendition forwards a rendition's media playlist, I-frame
+// playlist or init segment of an extra: .../play/{rendId}/<leaf> to
+// chino-stream's /api/play/{id}/extras/{extraId}/{rendId}/<leaf>.
+func proxyExtraRendition(kc *katalog.Client, leaf string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if base := extraUpstream(w, r); base != "" {
+			kc.ProxyStream(w, r, base+"/"+chi.URLParam(r, "rendId")+"/"+leaf, bearerFrom(r))
+		}
+	}
+}
+
+// proxyExtraSegment forwards one segment of an extra's rendition,
+// .../play/{rendId}/seg-{seg}<ext> (.m4s, or .vtt of an sN rendition), to
+// chino-stream's /api/play/{id}/extras/{extraId}/{rendId}/seg-{seg}<ext>.
+func proxyExtraSegment(kc *katalog.Client, ext string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if base := extraUpstream(w, r); base != "" {
+			kc.ProxyStream(w, r, base+"/"+chi.URLParam(r, "rendId")+"/seg-"+chi.URLParam(r, "seg")+ext, bearerFrom(r))
+		}
 	}
 }

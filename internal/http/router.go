@@ -286,6 +286,20 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// hook (or directly via the seek-bar hover UI).
 			r.With(title).Get("/items/{id}/play/trickplay/thumbnails.vtt", proxyTrickplayVTT(streamKC))
 			r.With(title).Get("/items/{id}/play/trickplay/sprite-{n:[0-9]+}.jpg", proxyTrickplaySprite(streamKC))
+			// A title's extras (its trailers, teasers, featurettes, …
+			// packaged apart from it): an extra's master, its play_path in
+			// the item detail, and the renditions the master names,
+			// proxied to chino-stream's /api/play/{id}/extras/{extraId}/,
+			// query and all. The title gate holds a capped viewer to the
+			// rating of the title {id}; chino-stream serves an extra only
+			// under its own title. An extra has no progress, watched,
+			// segments, trickplay, /info or /prewarm.
+			r.With(title).Get("/items/{id}/extras/{extraId}/play/master.m3u8", proxyExtra(streamKC, "master.m3u8"))
+			r.With(title).Get("/items/{id}/extras/{extraId}/play/{rendId:[vas][0-9]+}/playlist.m3u8", proxyExtraRendition(streamKC, "playlist.m3u8"))
+			r.With(title).Get("/items/{id}/extras/{extraId}/play/{rendId:[va][0-9]+}/iframes.m3u8", proxyExtraRendition(streamKC, "iframes.m3u8"))
+			r.With(title).Get("/items/{id}/extras/{extraId}/play/{rendId:[va][0-9]+}/init.mp4", proxyExtraRendition(streamKC, "init.mp4"))
+			r.With(title).Get("/items/{id}/extras/{extraId}/play/{rendId:[va][0-9]+}/seg-{seg:[0-9]+}.m4s", proxyExtraSegment(streamKC, ".m4s"))
+			r.With(title).Get("/items/{id}/extras/{extraId}/play/{rendId:s[0-9]+}/seg-{seg:[0-9]+}.vtt", proxyExtraSegment(streamKC, ".vtt"))
 			// Embedded-subtitle stream: extracted on demand by
 			// katalog-stream (ffmpeg -c:s webvtt). Proxied here so the
 			// player can append ?stream=… and the browser's <track src>

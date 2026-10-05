@@ -277,6 +277,8 @@ func pathOf(route, title string) string {
 			return "high"
 		case "listId":
 			return "l1"
+		case "extraId":
+			return testExtra
 		}
 		return "1" // audioIdx, n, streamIndex
 	})
