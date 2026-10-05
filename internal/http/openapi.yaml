@@ -582,6 +582,90 @@ paths:
           content:
             application/vnd.apple.mpegurl:
               schema: { type: string }
+  /v1/notices:
+    get:
+      summary: The signed-in person's notices — what addons told them — newest first
+      description: >-
+        Read from portal-api (GET /api/portal/me/notices) with the person's
+        bearer; chino-api keeps nothing of them. Best effort: with no
+        portal-api, or one that does not answer as it does, the list is
+        empty and available false, and the answer still 200 — a home screen
+        that shows notices never fails for them. A notice is its addon's
+        plain text: a client shows it as text and never as markup, follows
+        its link only to its own server, and opens its itemId with the item
+        routes, which hold a capped viewer to their cap.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The person's notices, how many are unread, and whether portal-api answered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NoticeList" }
+        "401":
+          description: No bearer, or one that is not valid (a stream token is not taken)
+  /v1/notices/{noticeId}/read:
+    post:
+      summary: Mark one of the person's notices read
+      description: Forwarded to portal-api (POST /api/portal/me/notices/{noticeId}/read) with the person's bearer.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/NoticeID"
+      responses:
+        "200":
+          description: Read — once; reading it again keeps when it was first read
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unread: { type: integer, description: "How many of the person's notices are unread still" }
+        "401":
+          description: No bearer, or one that is not valid
+        "404":
+          $ref: "#/components/responses/NoNotice"
+        "502":
+          $ref: "#/components/responses/NoticesUnavailable"
+        "503":
+          $ref: "#/components/responses/NoticesUnavailable"
+  /v1/notices/read-all:
+    post:
+      summary: Mark every notice of the person read
+      description: Forwarded to portal-api (POST /api/portal/me/notices/read-all) with the person's bearer.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Read
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  read: { type: integer, description: How many it marked }
+                  unread: { type: integer, enum: [0] }
+        "401":
+          description: No bearer, or one that is not valid
+        "502":
+          $ref: "#/components/responses/NoticesUnavailable"
+        "503":
+          $ref: "#/components/responses/NoticesUnavailable"
+  /v1/notices/{noticeId}:
+    delete:
+      summary: Delete one of the person's notices
+      description: Forwarded to portal-api (DELETE /api/portal/me/notices/{noticeId}) with the person's bearer.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/NoticeID"
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          description: No bearer, or one that is not valid
+        "404":
+          $ref: "#/components/responses/NoNotice"
+        "502":
+          $ref: "#/components/responses/NoticesUnavailable"
+        "503":
+          $ref: "#/components/responses/NoticesUnavailable"
   /v1/feedback:
     post:
       summary: Submit a bug / feedback report (becomes an OpenProject ticket)
@@ -770,7 +854,72 @@ components:
       name: t
       description: Seconds into the title the client starts at; what is warmed from.
       schema: { type: number, minimum: 0 }
+    NoticeID:
+      in: path
+      name: noticeId
+      required: true
+      description: >
+        A notice's id, as GET /api/v1/notices lists it: letters, digits and
+        dashes (portal-api's are UUIDs). Anything else is 404, and goes
+        nowhere.
+      schema: { type: string, pattern: "^[A-Za-z0-9-]{1,64}$" }
+  responses:
+    NoNotice:
+      description: The person has no notice of that id — someone else's is as one there is not
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/NoticeRefusal" }
+    NoticesUnavailable:
+      description: >-
+        portal-api did not change the notice — 502: it did not answer, or not
+        as it does; 503: this server has none configured. The app keeps the
+        notice as it was.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/NoticeRefusal" }
   schemas:
+    Notice:
+      type: object
+      required: [id, addon, addonTitle, title, body, link, itemId, createdAt, readAt]
+      description: >
+        What an addon told the person, as portal-api keeps it. Plain text,
+        shown as text: a title of at most 80 characters, a body of at most
+        280 that may hold line breaks.
+      properties:
+        id: { type: string, example: 3f2b9c1e-0b7a-4c55-9d1e-2a4f6b8c0d1e }
+        addon: { type: string, description: "The addon's key", example: example }
+        addonTitle: { type: string, description: "The addon's app title: whom the notice is from", example: Example }
+        addonIcon: { type: string, description: "The addon's app icon, a lucide name; '' for none", example: puzzle }
+        title: { type: string, maxLength: 80 }
+        body: { type: string, maxLength: 280 }
+        link:
+          type: string
+          description: >
+            '' for none; else a path on the server, or an absolute http(s)
+            URL on its own origin — portal-api checks it as it checks a slot
+            row's link. A client follows it only to its own server.
+        itemId:
+          type: string
+          description: "'' for none; else a title's id, opened with the item routes"
+        createdAt: { type: string, format: date-time }
+        readAt: { type: string, format: date-time, nullable: true, description: null while unread }
+    NoticeList:
+      type: object
+      required: [notices, unread, available]
+      properties:
+        notices:
+          type: array
+          description: Newest first; the person keeps their newest 100
+          items: { $ref: "#/components/schemas/Notice" }
+        unread: { type: integer }
+        available:
+          type: boolean
+          description: false when no portal-api answered — the list is empty then, and says nothing about the person's notices
+    NoticeRefusal:
+      type: object
+      properties:
+        error: { type: string, enum: [not_found, notices_unavailable] }
+        message: { type: string, description: For the person }
     DeletedData:
       type: object
       description: How many rows of each kind were deleted.

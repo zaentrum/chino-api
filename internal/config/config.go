@@ -50,7 +50,8 @@ type Config struct {
 
 	// PortalBaseURL is the in-cluster URL of portal-api. chino forwards the
 	// user's bearer to GET /api/portal/slots/{slot} to surface addon-contributed
-	// extension buttons. Empty/unreachable => no extensions (empty slot).
+	// extension buttons, and to /api/portal/me/notices for the notices addons
+	// left them. Empty/unreachable => no extensions (empty slot), no notices.
 	PortalBaseURL string
 
 	// AccountDeletionToken is the token chino-api and portal-api show each

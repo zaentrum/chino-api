@@ -38,6 +38,8 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `GET/POST /api/v1/items/{id}/progress` | bearer JWT | playback progress |
 | `POST /api/v1/play/events` | bearer JWT or stream token | playback telemetry (the stream token for `sendBeacon`) |
 | `GET /api/v1/events` | bearer JWT or stream token | live catalog notifications (SSE) |
+| `GET /api/v1/notices` | bearer JWT | what addons told the signed-in person, from portal-api — best effort ([below](#notices)) |
+| `POST /api/v1/notices/{noticeId}/read` · `POST /api/v1/notices/read-all` · `DELETE /api/v1/notices/{noticeId}` | bearer JWT | one notice read, all read, one deleted — forwarded to portal-api |
 | `POST /api/v1/feedback` | bearer JWT | bug report → OpenProject (503 when unconfigured) |
 | `POST /api/v1/admin/items/{id}/package` | bearer JWT with the admin role | an item's packaging, forwarded to katalog-manager with the bearer |
 | `GET /api/v1/admin/items/{id}/package` | bearer JWT with the admin role | the item's processing steps, from katalog-manager |
@@ -109,6 +111,37 @@ A client offers it as **Delete Account**, asks first and says what goes
 its bearer, and signs out on `200`; on `409` it shows `message`, on `501` that
 accounts are deleted by whoever runs the server.
 
+### Notices
+
+An addon can tell one person something — "your title is ready". portal-api
+keeps the notices and shows each person their own; the apps read and change
+them here, and chino-api forwards the viewer's bearer to portal-api's
+`/api/portal/me/notices` and keeps nothing of them. It is best effort, as the
+slots are: `GET /api/v1/notices` always answers `200` —
+`{"notices": [...], "unread": n, "available": true}`, or with no portal-api, or
+one that does not answer, an empty list and `"available": false` — so a home
+screen that shows notices never fails for them.
+
+| Route | Answers |
+|---|---|
+| `GET /api/v1/notices` | the person's notices, newest first (they keep their newest 100), `unread`, `available` |
+| `POST /api/v1/notices/{noticeId}/read` | `200 {"unread": n}`; reading it again keeps when it was first read |
+| `POST /api/v1/notices/read-all` | `200 {"read": n, "unread": 0}` |
+| `DELETE /api/v1/notices/{noticeId}` | `204` |
+
+A notice the person does not have is `404 {"error":"not_found"}` — someone
+else's is as one there is not; a change portal-api did not make is `502` (it
+did not answer) or `503` (none configured), `{"error":"notices_unavailable"}`,
+and the notice stays as it was. A notice carries `id`, `addon`, `addonTitle`
+and `addonIcon` (whom it is from), `title` (at most 80 characters), `body` (at
+most 280, line breaks allowed), `link` and `itemId` (`""` for none),
+`createdAt`, and `readAt` (`null` while unread); the spec has the schema.
+
+A client shows the title, the body and whom it is from as plain text, never as
+markup; follows `link` only to its own server — a path, or an http(s) URL on
+the server's origin; opens `itemId` with the item routes, which hold a capped
+viewer to their cap; and shows the unread count where the person looks first.
+
 ### Playback
 
 The play routes proxy chino-stream, query and all: the stream token, `caps`
@@ -165,7 +198,7 @@ Configured entirely through environment variables (see `internal/config`):
 | `OPENPROJECT_URL` / `OPENPROJECT_TOKEN` / `OPENPROJECT_PROJECT_ID` / `OPENPROJECT_BUG_TYPE_ID` | feedback pipeline (optional) |
 | `STREAM_SIGNING_KEY` | shared HMAC secret for signed `?stream=` URLs (optional) |
 | `ACCOUNT_DELETION_TOKEN` | the token chino-api and portal-api delete an account with (Secret `zaentrum-people`, key `deletion-token`, on the platform); empty: `DELETE /api/v1/me` answers 501 |
-| `PORTAL_BASE_URL` | portal-api, for addon slots and account deletion (default `http://portal-api`) |
+| `PORTAL_BASE_URL` | portal-api, for addon slots, notices and account deletion (default `http://portal-api`) |
 
 ## Layout
 
