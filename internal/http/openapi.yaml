@@ -1203,9 +1203,9 @@ components:
           example: trailer
         title:
           type: string
-          description: What a viewer sees, an admin's label else the title the extra was taken in with
+          description: What a viewer sees, its label when one is set (nothing sets one yet) else the title the extra was taken in with
           example: Trailer
-        language: { type: string, description: "the language spoken in it, BCP 47", example: en }
+        language: { type: string, description: "the language spoken in it, as taken in: BCP 47 or ISO 639-2 (en, eng; zxx none)", example: en }
         duration_ms: { type: integer, example: 33000 }
         season_number:
           type: integer
