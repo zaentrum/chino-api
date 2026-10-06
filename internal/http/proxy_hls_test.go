@@ -86,3 +86,43 @@ func TestSubtitleRenditionsAreProxiedWithTheStreamToken(t *testing.T) {
 		}
 	}
 }
+
+// A playback session is pinned to a package version: chino-stream writes
+// v=<versionId> onto the URIs of its masters and playlists, and serves each
+// request of the session from that version. chino-api passes the query on
+// as it came, so v= reaches chino-stream unchanged beside the stream token
+// and caps: on a title's master, its packaged renditions and its on-the-fly
+// ladder, and on an extra's master and the extra's on-the-fly ladder.
+func TestTheVersionPinRidesOnToChinoStream(t *testing.T) {
+	const version = "f1f1f1f1-0000-4000-8000-0000000000f1"
+	extra := "/api/play/i1/extras/" + testExtra
+	routes := map[string]string{
+		"/api/v1/items/i1/play/master.m3u8":                          "/api/play/i1/master.m3u8",
+		"/api/v1/items/i1/play/v0/playlist.m3u8":                     "/api/play/i1/v0/playlist.m3u8",
+		"/api/v1/items/i1/play/v0/seg-00001.m4s":                     "/api/play/i1/v0/seg-00001.m4s",
+		"/api/v1/items/i1/play/high/index.m3u8":                      "/api/play/i1/high/index.m3u8",
+		"/api/v1/items/i1/play/high/3.m4s":                           "/api/play/i1/high/3.m4s",
+		"/api/v1/items/i1/extras/" + testExtra + "/play/master.m3u8": extra + "/master.m3u8",
+		"/api/v1/items/i1/extras/" + testExtra + "/play/high/3.m4s":  extra + "/high/3.m4s",
+	}
+	upstream := map[string]string{}
+	for _, p := range routes {
+		upstream[p] = "bytes of " + p
+	}
+	stream := newFake(t, upstream)
+	h := streamRouter(t, stream.URL)
+	query := "stream=" + streamToken(t) + "&caps=avc:1080,hvc:2160,aac&v=" + version
+
+	for path, want := range routes {
+		before := len(stream.requests())
+		w := do(h, "GET", path+"?"+query, nil)
+		reqs := stream.requests()
+		if w.Code != http.StatusOK || w.Body.String() != upstream[want] || len(reqs) != before+1 {
+			t.Errorf("%s: %d %q, %d upstream requests", path, w.Code, w.Body, len(reqs)-before)
+			continue
+		}
+		if r := reqs[len(reqs)-1]; r.URL.Path != want || r.URL.RawQuery != query {
+			t.Errorf("%s reached chino-stream as %s, want %s?%s", path, r.URL, want, query)
+		}
+	}
+}
