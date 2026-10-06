@@ -148,14 +148,15 @@ viewer to their cap; and shows the unread count where the person looks first.
 
 The play routes proxy chino-stream, query and all: the stream token, `caps`
 (what the client decodes, e.g. `avc:2160,hvc:2160,aac,eac3`) and `q` ride on
-to every playlist and segment. For a packaged title chino-stream serves each
-client one codec family (HEVC when it decodes it, else H.264) at the heights
-its decoder takes, the audio groups it decodes and the subtitle group the
-package has; `q=<name>` from `/play/info`'s `qualities` serves one rung, `auto`
-(the default) the ladder. The rules and the `/play/info` shape are in
-chino-stream's README and in the spec (`PlayInfo`, `PlayQuality`). A quality
-menu shows `qualities` when it has two or more entries, by `label`, and
-reloads the master with `q=<name>`.
+to every playlist and segment, and so does `v=<versionId>`, which chino-stream
+writes onto a package's URIs to pin the session to that version. For a
+packaged title chino-stream serves each client one codec family (HEVC when it
+decodes it, else H.264) at the heights its decoder takes, the audio groups it
+decodes and the subtitle group the package has; `q=<name>` from `/play/info`'s
+`qualities` serves one rung, `auto` (the default) the ladder. The rules and the
+`/play/info` shape are in chino-stream's README and in the spec (`PlayInfo`,
+`PlayQuality`). A quality menu shows `qualities` when it has two or more
+entries, by `label`, and reloads the master with `q=<name>`.
 
 ### Extras
 
@@ -189,8 +190,10 @@ streaming - come with its detail, `GET /api/v1/items/{id}`, beside
 - `play_path` is the extra's HLS master. A client asks for it as for a title's
   master, with `?stream=<token>&caps=<caps>` (`q=<rung id>` for one rung), and
   the master's URIs carry the query on. chino-stream serves it from the
-  extra's package, H.264 and stereo AAC with nothing made on the fly, and only
-  under its own title; its routes are in the spec.
+  extra's package, HEVC only as a title's is, and only under its own title; a
+  client that decodes none of its rungs gets the on-the-fly master, transcoded
+  from the package, its rung (`high`, `medium` or `low`) and audio tracks
+  under the extra's own routes. Its routes are in the spec.
 - The routes of a title's extras hold a capped viewer to the title's rating:
   the 404 of the title there too.
 - An extra has no progress, watched, segments, trickplay, `/play/info` or

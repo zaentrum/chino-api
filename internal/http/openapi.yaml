@@ -590,12 +590,15 @@ paths:
         plays from a package of its own, under its title's id. The master as
         this client is served it, by the rules of a packaged title's master
         (caps; q=<rung id> for one rung), every URI in it carrying the
-        request's query, so the stream token authorises each fetch. There is
-        no on-the-fly master: an extra is packaged H.264 and stereo AAC. 404
-        for a title the viewer's rating cap does not allow, as on every route
-        of the title, and for an extra that is not the title's or not
-        packaged. An extra has no progress, watched, segments, trickplay,
-        /play/info or /play/prewarm.
+        request's query, so the stream token authorises each fetch. An extra
+        is packaged HEVC only, as a title is: a client that decodes none of
+        its rungs is served the on-the-fly master, transcoded from the
+        package, whose rung and audio tracks play under the extra's
+        {high|medium|low}/index.m3u8, init.mp4, {n}.m4s and
+        audio/{n}/index.m3u8, init.mp4, {n}.m4s. 404 for a title the viewer's
+        rating cap does not allow, as on every route of the title, and for an
+        extra that is not the title's or not packaged. An extra has no
+        progress, watched, segments, trickplay, /play/info or /play/prewarm.
       security: [{ bearerAuth: [] }, { streamToken: [] }]
       parameters:
         - $ref: "#/components/parameters/ItemID"
@@ -603,7 +606,7 @@ paths:
         - $ref: "#/components/parameters/Caps"
         - in: query
           name: q
-          description: auto (default), or a rung id the master names (v0, v1) for that rung alone.
+          description: auto (default), or a rung id the master names (v0, v1) for that rung alone; on the on-the-fly master high, medium or low.
           schema: { type: string, example: v1 }
       responses:
         "200":
