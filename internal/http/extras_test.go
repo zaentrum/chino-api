@@ -17,41 +17,50 @@ import (
 const testExtra = "1b5c2a8e-6f0d-4c3e-9a51-2d7f0c4b8e01"
 
 // extraRoutes are the routes of one extra under its title's
-// /api/v1/items/{id}/extras/{extraId}/play/, one of each shape.
+// /api/v1/items/{id}/extras/{extraId}/play/, one of each shape: its
+// package's, and those of the on-the-fly ladder chino-stream's master of it
+// names for a client that decodes none of the package's rungs.
 var extraRoutes = []string{"master.m3u8", "v0/playlist.m3u8", "a0/playlist.m3u8", "s0/playlist.m3u8",
-	"v1/iframes.m3u8", "v0/init.mp4", "a0/init.mp4", "v0/seg-00001.m4s", "a0/seg-00004.m4s", "s0/seg-00002.vtt"}
+	"v1/iframes.m3u8", "v0/init.mp4", "a0/init.mp4", "v0/seg-00001.m4s", "a0/seg-00004.m4s", "s0/seg-00002.vtt",
+	"high/index.m3u8", "medium/init.mp4", "low/3.m4s", "audio/0/index.m3u8", "audio/1/init.mp4", "audio/1/2.m4s"}
 
-// An extra's master and the renditions it names are proxied to chino-stream
-// under the title's id, in the stream-token group: /api/v1/items/{id}/
-// extras/{extraId}/play/<route> is chino-stream's /api/play/{id}/extras/
-// {extraId}/<route>, the query (the stream token, caps, q) riding on, and
-// chino-stream's answer coming back as it is — its 404 for an extra that is
-// not the title's too.
+// An extra's master and the renditions it names, packaged or on the fly, are
+// proxied to chino-stream under the title's id, in the stream-token group,
+// as the title's own routes of their shape are: /api/v1/items/{id}/extras/
+// {extraId}/play/<route> is chino-stream's /api/play/{id}/extras/{extraId}/
+// <route> as /api/v1/items/{id}/play/<route> is its /api/play/{id}/<route>,
+// the query (the stream token, caps, q) riding on, and chino-stream's answer
+// coming back as it is — its 404 for an extra that is not the title's too.
 func TestExtrasAreProxiedWithTheStreamToken(t *testing.T) {
 	base := "/api/play/i1/extras/" + testExtra + "/"
 	upstream := map[string]string{}
 	for _, route := range extraRoutes {
 		upstream[base+route] = "bytes of " + route
+		upstream["/api/play/i1/"+route] = "bytes of the title's " + route
 	}
 	stream := newFake(t, upstream)
 	h := streamRouter(t, stream.URL)
 	tok := streamToken(t)
 
 	for _, route := range extraRoutes {
-		path := "/api/v1/items/i1/extras/" + testExtra + "/play/" + route
-		before := len(stream.requests())
-		w := do(h, "GET", path+"?stream="+tok+"&caps=avc,aac&q=v1", nil)
-		if w.Code != http.StatusOK || w.Body.String() != "bytes of "+route {
-			t.Errorf("%s: %d %q", path, w.Code, w.Body)
-			continue
-		}
-		reqs := stream.requests()
-		if len(reqs) != before+1 {
-			t.Fatalf("%s: %d upstream requests", path, len(reqs)-before)
-		}
-		r := reqs[len(reqs)-1]
-		if q := r.URL.Query(); r.URL.Path != base+route || q.Get("stream") != tok || q.Get("caps") != "avc,aac" || q.Get("q") != "v1" {
-			t.Errorf("%s reached chino-stream as %s", path, r.URL)
+		for path, want := range map[string]string{
+			"/api/v1/items/i1/extras/" + testExtra + "/play/" + route: base + route,
+			"/api/v1/items/i1/play/" + route:                          "/api/play/i1/" + route,
+		} {
+			before := len(stream.requests())
+			w := do(h, "GET", path+"?stream="+tok+"&caps=avc,aac&q=v1", nil)
+			if w.Code != http.StatusOK || w.Body.String() != upstream[want] {
+				t.Errorf("%s: %d %q", path, w.Code, w.Body)
+				continue
+			}
+			reqs := stream.requests()
+			if len(reqs) != before+1 {
+				t.Fatalf("%s: %d upstream requests", path, len(reqs)-before)
+			}
+			r := reqs[len(reqs)-1]
+			if q := r.URL.Query(); r.URL.Path != want || q.Get("stream") != tok || q.Get("caps") != "avc,aac" || q.Get("q") != "v1" {
+				t.Errorf("%s reached chino-stream as %s", path, r.URL)
+			}
 		}
 	}
 
@@ -61,32 +70,34 @@ func TestExtrasAreProxiedWithTheStreamToken(t *testing.T) {
 		t.Errorf("another title's extra: %d %q, want chino-stream's 404", w.Code, w.Body)
 	}
 
-	// No credential, or a forged one: 401, and chino-stream is not asked.
+	// No credential, or a forged one: 401 on every route of an extra, as on
+	// the title's route of its shape, and chino-stream is not asked.
 	before := len(stream.requests())
 	for _, q := range []string{"", "?stream=" + tok[:len(tok)-2] + "xx"} {
-		for _, route := range []string{"master.m3u8", "v0/seg-00001.m4s"} {
-			path := "/api/v1/items/i1/extras/" + testExtra + "/play/" + route
-			if w := do(h, "GET", path+q, nil); w.Code != http.StatusUnauthorized {
-				t.Errorf("%s%s: %d, want 401", path, q, w.Code)
+		for _, route := range extraRoutes {
+			for _, path := range []string{"/api/v1/items/i1/extras/" + testExtra + "/play/" + route, "/api/v1/items/i1/play/" + route} {
+				if w := do(h, "GET", path+q, nil); w.Code != http.StatusUnauthorized {
+					t.Errorf("%s%s: %d, want 401", path, q, w.Code)
+				}
 			}
 		}
 	}
-	// An extra id that is no UUID, a rendition of no route's shape, and the
-	// routes of a title an extra has none of: 404, and chino-stream is not
-	// asked either.
-	for _, path := range []string{
-		"/api/v1/items/i1/extras/not-an-extra/play/master.m3u8",
-		"/api/v1/items/i1/extras/" + testExtra[:35] + "/play/master.m3u8",
-		"/api/v1/items/i1/extras/" + testExtra + "0/play/v0/init.mp4",
-		"/api/v1/items/i1/extras/..%2F..%2Fi2/play/master.m3u8",
-		"/api/v1/items/i1/extras/" + testExtra + "/play/s0/init.mp4",
-		"/api/v1/items/i1/extras/" + testExtra + "/play/v0/seg-00001.vtt",
-		"/api/v1/items/i1/extras/" + testExtra + "/play/x0/playlist.m3u8",
-		"/api/v1/items/i1/extras/" + testExtra + "/play/high/index.m3u8",
-		"/api/v1/items/i1/extras/" + testExtra + "/play/trickplay/thumbnails.vtt",
-		"/api/v1/items/i1/extras/" + testExtra + "/play/info",
-		"/api/v1/items/i1/extras/" + testExtra + "/progress",
-	} {
+	// An extra id that is no UUID, on every route of an extra; a rendition or
+	// a rung of no route's shape (no stream copy either: a package is never
+	// stream-copied); and the routes of a title an extra has none of: 404,
+	// and chino-stream is not asked either.
+	var unrouted []string
+	for _, id := range []string{"not-an-extra", testExtra[:35], testExtra + "0", "..%2F..%2Fi2"} {
+		for _, route := range extraRoutes {
+			unrouted = append(unrouted, "/api/v1/items/i1/extras/"+id+"/play/"+route)
+		}
+	}
+	for _, route := range []string{"s0/init.mp4", "v0/seg-00001.vtt", "x0/playlist.m3u8", "v0/index.m3u8",
+		"highx/index.m3u8", "xlow/init.mp4", "high/playlist.m3u8", "high/seg-00001.m4s", "copy/index.m3u8",
+		"audio/x/index.m3u8", "audio/0/seg-00001.m4s", "trickplay/thumbnails.vtt", "info"} {
+		unrouted = append(unrouted, "/api/v1/items/i1/extras/"+testExtra+"/play/"+route)
+	}
+	for _, path := range append(unrouted, "/api/v1/items/i1/extras/"+testExtra+"/progress") {
 		if w := do(h, "GET", path+"?stream="+tok, nil); w.Code != http.StatusNotFound {
 			t.Errorf("%s: %d %q, want 404", path, w.Code, w.Body)
 		}

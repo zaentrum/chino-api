@@ -39,48 +39,62 @@ func proxyZapFeed(kc *katalog.Client, g gate) http.HandlerFunc {
 	return g.filteredStream(kc, "/api/play/zap-feed", g.zapFeed)
 }
 
-// proxyHLSQ forwards to /api/play/{id}/{quality}/<leaf> on
-// katalog-stream. Used for per-quality playlists and init segments.
-func proxyHLSQ(kc *katalog.Client, leaf string) http.HandlerFunc {
+// playUpstream is chino-stream's path of what a play request names, the
+// on-the-fly ladder's routes under it: an item's (itemUpstream) or an
+// extra's (extraUpstream). "" when it has answered the request itself, and
+// chino-stream is not asked.
+type playUpstream func(w http.ResponseWriter, r *http.Request) string
+
+// itemUpstream is chino-stream's path of the item r names, /api/play/{id}.
+func itemUpstream(_ http.ResponseWriter, r *http.Request) string {
+	return "/api/play/" + chi.URLParam(r, "id")
+}
+
+// proxyHLSQ forwards an on-the-fly rung's media playlist or init segment,
+// .../play/{quality}/<leaf> of an item or an extra, to chino-stream's
+// <upstream>/{quality}/<leaf>.
+func proxyHLSQ(kc *katalog.Client, upstream playUpstream, leaf string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id := chi.URLParam(r, "id")
-		quality := chi.URLParam(r, "quality")
-		kc.ProxyStream(w, r, "/api/play/"+id+"/"+quality+"/"+leaf, bearerFrom(r))
+		if base := upstream(w, r); base != "" {
+			kc.ProxyStream(w, r, base+"/"+chi.URLParam(r, "quality")+"/"+leaf, bearerFrom(r))
+		}
 	}
 }
 
-// proxyHLSSegment forwards to /api/play/{id}/{quality}/{seg}.m4s on
-// katalog-stream. The 6-second segment fetches are the hot path of
-// the new pipeline — each runs short, so per-request transcode +
-// io.Copy is fine.
-func proxyHLSSegment(kc *katalog.Client) http.HandlerFunc {
+// proxyHLSSegment forwards one on-the-fly media segment,
+// .../play/{quality}/{seg}.m4s of an item or an extra, to chino-stream's
+// <upstream>/{quality}/{seg}.m4s: the hot path of the live pipeline.
+// chino-stream serves a segment as ffmpeg finishes it, so one may take a
+// moment to start; ProxyStream's stream client sets no deadline, the play
+// group no middleware.Timeout, and a client gone cancels the request.
+func proxyHLSSegment(kc *katalog.Client, upstream playUpstream) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id := chi.URLParam(r, "id")
-		quality := chi.URLParam(r, "quality")
-		seg := chi.URLParam(r, "seg")
-		kc.ProxyStream(w, r, "/api/play/"+id+"/"+quality+"/"+seg+".m4s", bearerFrom(r))
+		if base := upstream(w, r); base != "" {
+			kc.ProxyStream(w, r, base+"/"+chi.URLParam(r, "quality")+"/"+chi.URLParam(r, "seg")+".m4s", bearerFrom(r))
+		}
 	}
 }
 
-// proxyHLSAudio forwards to /api/play/{id}/audio/{audioIdx}/<leaf> on
-// katalog-stream — used for the per-audio-track media playlist and
-// init segment.
-func proxyHLSAudio(kc *katalog.Client, leaf string) http.HandlerFunc {
+// proxyHLSAudio forwards an on-the-fly audio track's media playlist or init
+// segment, .../play/audio/{audioIdx}/<leaf> of an item or an extra, to
+// chino-stream's <upstream>/audio/{audioIdx}/<leaf>.
+func proxyHLSAudio(kc *katalog.Client, upstream playUpstream, leaf string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id := chi.URLParam(r, "id")
-		audioIdx := chi.URLParam(r, "audioIdx")
-		kc.ProxyStream(w, r, "/api/play/"+id+"/audio/"+audioIdx+"/"+leaf, bearerFrom(r))
+		if base := upstream(w, r); base != "" {
+			kc.ProxyStream(w, r, base+"/audio/"+chi.URLParam(r, "audioIdx")+"/"+leaf, bearerFrom(r))
+		}
 	}
 }
 
-// proxyHLSAudioSegment forwards to
-// /api/play/{id}/audio/{audioIdx}/{seg}.m4s on katalog-stream.
-func proxyHLSAudioSegment(kc *katalog.Client) http.HandlerFunc {
+// proxyHLSAudioSegment forwards one on-the-fly audio segment,
+// .../play/audio/{audioIdx}/{seg}.m4s of an item or an extra, to
+// chino-stream's <upstream>/audio/{audioIdx}/{seg}.m4s, as proxyHLSSegment
+// does a rung's.
+func proxyHLSAudioSegment(kc *katalog.Client, upstream playUpstream) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id := chi.URLParam(r, "id")
-		audioIdx := chi.URLParam(r, "audioIdx")
-		seg := chi.URLParam(r, "seg")
-		kc.ProxyStream(w, r, "/api/play/"+id+"/audio/"+audioIdx+"/"+seg+".m4s", bearerFrom(r))
+		if base := upstream(w, r); base != "" {
+			kc.ProxyStream(w, r, base+"/audio/"+chi.URLParam(r, "audioIdx")+"/"+chi.URLParam(r, "seg")+".m4s", bearerFrom(r))
+		}
 	}
 }
 

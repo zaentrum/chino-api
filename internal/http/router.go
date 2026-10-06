@@ -259,13 +259,13 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// capped viewer's leaves out the cards its cap does not
 			// allow.
 			r.Get("/play/zap-feed", proxyZapFeed(streamKC, g))
-			r.With(title).Get("/items/{id}/play/{quality}/index.m3u8", proxyHLSQ(streamKC, "index.m3u8"))
-			r.With(title).Get("/items/{id}/play/{quality}/init.mp4", proxyHLSQ(streamKC, "init.mp4"))
-			r.With(title).Get("/items/{id}/play/{quality}/{seg:[0-9]+}.m4s", proxyHLSSegment(streamKC))
+			r.With(title).Get("/items/{id}/play/{quality}/index.m3u8", proxyHLSQ(streamKC, itemUpstream, "index.m3u8"))
+			r.With(title).Get("/items/{id}/play/{quality}/init.mp4", proxyHLSQ(streamKC, itemUpstream, "init.mp4"))
+			r.With(title).Get("/items/{id}/play/{quality}/{seg:[0-9]+}.m4s", proxyHLSSegment(streamKC, itemUpstream))
 			// Audio rendition group (multi-language audio).
-			r.With(title).Get("/items/{id}/play/audio/{audioIdx:[0-9]+}/index.m3u8", proxyHLSAudio(streamKC, "index.m3u8"))
-			r.With(title).Get("/items/{id}/play/audio/{audioIdx:[0-9]+}/init.mp4", proxyHLSAudio(streamKC, "init.mp4"))
-			r.With(title).Get("/items/{id}/play/audio/{audioIdx:[0-9]+}/{seg:[0-9]+}.m4s", proxyHLSAudioSegment(streamKC))
+			r.With(title).Get("/items/{id}/play/audio/{audioIdx:[0-9]+}/index.m3u8", proxyHLSAudio(streamKC, itemUpstream, "index.m3u8"))
+			r.With(title).Get("/items/{id}/play/audio/{audioIdx:[0-9]+}/init.mp4", proxyHLSAudio(streamKC, itemUpstream, "init.mp4"))
+			r.With(title).Get("/items/{id}/play/audio/{audioIdx:[0-9]+}/{seg:[0-9]+}.m4s", proxyHLSAudioSegment(streamKC, itemUpstream))
 			// Packaged-CMAF rendition routes. Rend IDs are v0/v1/.../
 			// a0/a1/... — strict regex stops collisions with the
 			// legacy {quality} routes above. The master playlist
@@ -300,6 +300,19 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			r.With(title).Get("/items/{id}/extras/{extraId}/play/{rendId:[va][0-9]+}/init.mp4", proxyExtraRendition(streamKC, "init.mp4"))
 			r.With(title).Get("/items/{id}/extras/{extraId}/play/{rendId:[va][0-9]+}/seg-{seg:[0-9]+}.m4s", proxyExtraSegment(streamKC, ".m4s"))
 			r.With(title).Get("/items/{id}/extras/{extraId}/play/{rendId:s[0-9]+}/seg-{seg:[0-9]+}.vtt", proxyExtraSegment(streamKC, ".vtt"))
+			// An extra is packaged HEVC only, as a title is: for a client that
+			// decodes none of its rungs chino-stream's master of it is an
+			// on-the-fly one, its rung and audio tracks transcoded from the
+			// package under the extra's routes. Proxied as a title's
+			// on-the-fly ladder is, with the rungs chino-stream has; the
+			// group keeps chi's ^…$ around all three (^high|medium|low$
+			// would take highx or xlow).
+			r.With(title).Get("/items/{id}/extras/{extraId}/play/{quality:(high|medium|low)}/index.m3u8", proxyHLSQ(streamKC, extraUpstream, "index.m3u8"))
+			r.With(title).Get("/items/{id}/extras/{extraId}/play/{quality:(high|medium|low)}/init.mp4", proxyHLSQ(streamKC, extraUpstream, "init.mp4"))
+			r.With(title).Get("/items/{id}/extras/{extraId}/play/{quality:(high|medium|low)}/{seg:[0-9]+}.m4s", proxyHLSSegment(streamKC, extraUpstream))
+			r.With(title).Get("/items/{id}/extras/{extraId}/play/audio/{audioIdx:[0-9]+}/index.m3u8", proxyHLSAudio(streamKC, extraUpstream, "index.m3u8"))
+			r.With(title).Get("/items/{id}/extras/{extraId}/play/audio/{audioIdx:[0-9]+}/init.mp4", proxyHLSAudio(streamKC, extraUpstream, "init.mp4"))
+			r.With(title).Get("/items/{id}/extras/{extraId}/play/audio/{audioIdx:[0-9]+}/{seg:[0-9]+}.m4s", proxyHLSAudioSegment(streamKC, extraUpstream))
 			// Embedded-subtitle stream: extracted on demand by
 			// katalog-stream (ffmpeg -c:s webvtt). Proxied here so the
 			// player can append ?stream=… and the browser's <track src>
