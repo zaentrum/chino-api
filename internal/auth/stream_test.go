@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"encoding/base64"
 	"strconv"
 	"strings"
@@ -75,5 +76,37 @@ func TestACappedStreamTokenReadsToTheOtherVerifiersAsBefore(t *testing.T) {
 	if pipe < 1 || err != nil || expUnix != exp.Unix() || string(payload[:pipe]) != "kid-1;max_rating=12" {
 		t.Errorf("the payload %q reads as user %q, expiry %v (%v), want kid-1;max_rating=12 and %d",
 			payload, payload[:max(pipe, 0)], expUnix, err, exp.Unix())
+	}
+}
+
+// The last character of a 32-byte MAC's 43 carries four of its bits and two
+// that are zero. Set one of those and a lenient decoder reads the same MAC:
+// that spelling is refused, whichever of the three it is.
+func TestVerifyRefusesAnotherSpellingOfItsMAC(t *testing.T) {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	s, err := NewSigner(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, _ := s.Mint("user-1", time.Hour)
+	dot := strings.IndexByte(tok, '.')
+	sig := tok[dot+1:]
+	last := strings.IndexByte(alphabet, sig[len(sig)-1])
+	if len(sig) != 43 || last%4 != 0 {
+		t.Fatalf("not a canonical 32-byte MAC: %q", sig)
+	}
+	mac, _ := base64.RawURLEncoding.DecodeString(sig)
+	for _, bits := range []int{1, 2, 3} {
+		other := sig[:len(sig)-1] + string(alphabet[last|bits])
+		same, err := base64.RawURLEncoding.DecodeString(other)
+		if err != nil || !bytes.Equal(same, mac) {
+			t.Fatalf("%q is no other spelling of the MAC: %v", other, err)
+		}
+		if user, err := s.Verify(tok[:dot+1] + other); err == nil {
+			t.Errorf("the MAC spelled %q verified (user %q)", other, user)
+		}
+	}
+	if _, err := s.Verify(tok); err != nil {
+		t.Errorf("the token itself: %v", err)
 	}
 }

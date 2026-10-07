@@ -115,7 +115,10 @@ func (s *Signer) verify(token string) (userID string, err error) {
 	mac := hmac.New(sha256.New, s.key)
 	mac.Write([]byte(payload))
 	expected := mac.Sum(nil)
-	got, decErr := base64.RawURLEncoding.DecodeString(sig)
+	// Read strictly: the last character of a 32-byte MAC carries two bits the
+	// MAC has none of, which a lenient decoder ignores, so four spellings of
+	// one MAC would verify. Only the one Mint writes (those bits zero) does.
+	got, decErr := base64.RawURLEncoding.Strict().DecodeString(sig)
 	if decErr != nil {
 		return "", errors.New("malformed stream token signature")
 	}
