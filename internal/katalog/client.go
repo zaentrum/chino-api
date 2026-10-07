@@ -143,6 +143,9 @@ type Subtitle struct {
 	Label   string `json:"label,omitempty"`
 	Format  string `json:"format,omitempty"`
 	Default bool   `json:"default,omitempty"`
+	// Forced is a subtitle a player shows by itself for the language it is in
+	// (katalog-api's forced, katalog-manager's isforced).
+	Forced bool `json:"forced,omitempty"`
 	// URL is synthesised by chino-api's subtitles handler, NOT returned
 	// by katalog-api. Points at /api/v1/play/subs/<id>.vtt which the
 	// chino-api proxy forwards to chino-stream → file on disk.
