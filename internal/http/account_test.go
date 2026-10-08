@@ -206,7 +206,7 @@ func TestAccountDeletionKeepsOrTakesTheRows(t *testing.T) {
 	st := testStore(t)
 	ctx := context.Background()
 	for _, user := range []string{"kid-2", "parent-2"} {
-		if err := st.SaveProgress(ctx, user, "m1", 600, 5400); err != nil {
+		if err := st.SaveProgress(ctx, user, []string{"m1"}, 600, 5400); err != nil {
 			t.Fatal(err)
 		}
 		if err := st.MarkWatched(ctx, user, "m2"); err != nil {

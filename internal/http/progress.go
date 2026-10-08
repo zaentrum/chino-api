@@ -58,7 +58,7 @@ func postProgress(s *store.Store) http.HandlerFunc {
 			http.Error(w, "bad JSON: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := s.SaveProgress(r.Context(), userID, itemID, body.PositionSec, body.DurationSec); err != nil {
+		if err := s.SaveProgress(r.Context(), userID, []string{itemID}, body.PositionSec, body.DurationSec); err != nil {
 			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
 			return
 		}

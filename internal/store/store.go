@@ -127,19 +127,36 @@ func (s *Store) ListContinueWatching(ctx context.Context, userID string, limit i
 	return out, rows.Err()
 }
 
-// MarkWatched inserts (or refreshes) a watched_history row. Idempotent:
-// re-watching bumps watched_at to now() so the most-recent watch wins.
-func (s *Store) MarkWatched(ctx context.Context, userID, itemID string) error {
-	if s == nil || s.p == nil || userID == "" || itemID == "" {
+// MarkWatched inserts (or refreshes) a watched_history row for each of
+// itemIDs, in one statement: the episodes of one file are watched together.
+// Idempotent: re-watching bumps watched_at to now() so the most-recent watch
+// wins.
+func (s *Store) MarkWatched(ctx context.Context, userID string, itemIDs ...string) error {
+	itemIDs = distinct(itemIDs)
+	if s == nil || s.p == nil || userID == "" || len(itemIDs) == 0 {
 		return nil
 	}
 	_, err := s.p.Exec(ctx,
 		`INSERT INTO watched_history (user_id, item_id, watched_at)
-		 VALUES ($1, $2, now())
+		 SELECT $1, id, now() FROM unnest($2::text[]) AS t(id)
 		 ON CONFLICT (user_id, item_id) DO UPDATE
 		   SET watched_at = now()`,
-		userID, itemID)
+		userID, itemIDs)
 	return err
+}
+
+// distinct is ids without the empty ones and without repeats, in their
+// order: one statement writes each row once.
+func distinct(ids []string) []string {
+	out := make([]string, 0, len(ids))
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // WatchedRow is one entry of the user's watch history — what they
@@ -186,17 +203,18 @@ func (s *Store) ListWatched(ctx context.Context, userID string, limit, offset in
 	return out, rows.Err()
 }
 
-// UnmarkWatched removes a watched_history row, so the item stops
-// showing the "watched" badge and re-enters Continue Watching if a
-// progress row still exists. Idempotent — deleting an absent row is a
+// UnmarkWatched removes the watched_history row of each of itemIDs, so the
+// items stop showing the "watched" badge and re-enter Continue Watching if
+// a progress row still exists. Idempotent — deleting an absent row is a
 // no-op.
-func (s *Store) UnmarkWatched(ctx context.Context, userID, itemID string) error {
-	if s == nil || s.p == nil || userID == "" || itemID == "" {
+func (s *Store) UnmarkWatched(ctx context.Context, userID string, itemIDs ...string) error {
+	itemIDs = distinct(itemIDs)
+	if s == nil || s.p == nil || userID == "" || len(itemIDs) == 0 {
 		return nil
 	}
 	_, err := s.p.Exec(ctx,
-		`DELETE FROM watched_history WHERE user_id = $1 AND item_id = $2`,
-		userID, itemID)
+		`DELETE FROM watched_history WHERE user_id = $1 AND item_id = ANY($2)`,
+		userID, itemIDs)
 	return err
 }
 
@@ -419,13 +437,15 @@ func (s *Store) BumpFeedbackReport(ctx context.Context, fingerprint string) (int
 	return count, err
 }
 
-// SaveProgress upserts the playback position for (user, item).
-// Idempotent — repeated calls just bump the position and updated_at.
-// `durationSec` is the player's view of the whole movie length; we keep
-// it so a future "Continue watching" UI can show progress percentages
-// without re-fetching the catalogue.
-func (s *Store) SaveProgress(ctx context.Context, userID, itemID string, positionSec, durationSec int) error {
-	if s == nil || s.p == nil || userID == "" || itemID == "" {
+// SaveProgress upserts the playback position for (user, item) of each of
+// itemIDs, in one statement: the episodes of one file share it, the same
+// position at the same updated_at. Idempotent — repeated calls just bump
+// the position and updated_at. `durationSec` is the player's view of the
+// whole movie length; we keep it so a future "Continue watching" UI can
+// show progress percentages without re-fetching the catalogue.
+func (s *Store) SaveProgress(ctx context.Context, userID string, itemIDs []string, positionSec, durationSec int) error {
+	itemIDs = distinct(itemIDs)
+	if s == nil || s.p == nil || userID == "" || len(itemIDs) == 0 {
 		return nil
 	}
 	if positionSec < 0 {
@@ -434,11 +454,11 @@ func (s *Store) SaveProgress(ctx context.Context, userID, itemID string, positio
 	_, err := s.p.Exec(ctx,
 		`INSERT INTO playback_progress
 		   (user_id, item_id, position_sec, duration_sec, updated_at)
-		 VALUES ($1, $2, $3, $4, now())
+		 SELECT $1, id, $3, $4, now() FROM unnest($2::text[]) AS t(id)
 		 ON CONFLICT (user_id, item_id) DO UPDATE
 		   SET position_sec = EXCLUDED.position_sec,
 		       duration_sec = GREATEST(EXCLUDED.duration_sec, playback_progress.duration_sec),
 		       updated_at   = now()`,
-		userID, itemID, positionSec, durationSec)
+		userID, itemIDs, positionSec, durationSec)
 	return err
 }

@@ -494,7 +494,7 @@ func TestAViewersListsAreHeldToItsCap(t *testing.T) {
 			if err := st.SetFlag(ctx, store.LikesTable, user, id, true); err != nil {
 				t.Fatal(err)
 			}
-			if err := st.SaveProgress(ctx, user, id, 120, 3600); err != nil {
+			if err := st.SaveProgress(ctx, user, []string{id}, 120, 3600); err != nil {
 				t.Fatal(err)
 			}
 			// History is another viewer's: what a viewer watched is finished,
