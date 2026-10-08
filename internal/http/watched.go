@@ -17,10 +17,12 @@ import (
 // position crosses 95 % of duration (whichever fires first), and by the
 // chino-web watched toggle on DetailPage / EpisodesList. The resulting
 // watched_history row drives the "Watched" pill on MediaCard and lets
-// continue-watching substitute the next episode for finished rows.
+// continue-watching substitute the next episode for finished rows. One
+// play of a file that holds several episodes watches each of them: the
+// row is written for every episode of the file the item plays (fileOf).
 //
 // Idempotent: re-watching just bumps watched_at.
-func postWatched(st *store.Store) http.HandlerFunc {
+func postWatched(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		itemID := chi.URLParam(r, "id")
 		if itemID == "" {
@@ -32,7 +34,7 @@ func postWatched(st *store.Store) http.HandlerFunc {
 			http.Error(w, "no subject", http.StatusUnauthorized)
 			return
 		}
-		if err := st.MarkWatched(r.Context(), userID, itemID); err != nil {
+		if err := st.MarkWatched(r.Context(), userID, fileOf(r, st, kc, userID, itemID)...); err != nil {
 			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -109,8 +111,9 @@ func listWatched(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 
 // deleteWatched clears the watched_history row for an item. Counterpart
 // to postWatched — used by the chino-web toggle so the user can unmark
-// something they accidentally finished or want to re-watch fresh.
-func deleteWatched(st *store.Store) http.HandlerFunc {
+// something they accidentally finished or want to re-watch fresh. As
+// postWatched, for every episode of the file the item plays.
+func deleteWatched(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		itemID := chi.URLParam(r, "id")
 		if itemID == "" {
@@ -122,7 +125,7 @@ func deleteWatched(st *store.Store) http.HandlerFunc {
 			http.Error(w, "no subject", http.StatusUnauthorized)
 			return
 		}
-		if err := st.UnmarkWatched(r.Context(), userID, itemID); err != nil {
+		if err := st.UnmarkWatched(r.Context(), userID, fileOf(r, st, kc, userID, itemID)...); err != nil {
 			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
 			return
 		}

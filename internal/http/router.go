@@ -102,8 +102,10 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			r.Post("/me/stream-token", postStreamToken(signer))
 			r.Get("/items", listItems(st, kc))
 			r.With(title).Get("/items/{id}", itemDetail(st, kc))
-			r.With(title).Post("/me/items/{id}/watched", postWatched(st))
-			r.With(title).Delete("/me/items/{id}/watched", deleteWatched(st))
+			// Watched, and the progress below, are a file's: a write for an
+			// episode of a file that holds several goes to each (files.go).
+			r.With(title).Post("/me/items/{id}/watched", postWatched(st, kc))
+			r.With(title).Delete("/me/items/{id}/watched", deleteWatched(st, kc))
 			r.Get("/me/watched", listWatched(st, kc))
 			r.With(title).Get("/items/{id}/segments", itemSegments(kc, streamKC))
 			r.With(title).Get("/items/{id}/similar", similarItems(st, kc))
@@ -136,7 +138,7 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// it. The player calls POST every ~10s while watching and GET
 			// once on mount to decide whether to offer "Resume from X:YZ?".
 			r.With(title).Get("/items/{id}/progress", getProgress(st))
-			r.With(title).Post("/items/{id}/progress", postProgress(st))
+			r.With(title).Post("/items/{id}/progress", postProgress(st, kc))
 
 			// Named watchlists — the user can keep several lists, each a
 			// grid of items, with exactly one default named "Watchlist".
