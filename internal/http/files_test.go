@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -668,5 +669,131 @@ func TestContinueWatchingHasOneCardForAFile(t *testing.T) {
 	hp := filesRouter(t, is, plain.URL, st)
 	if got := cards(t, hp, bearerWith(t, is, legacy, nil)); got != "s05e16@0 up next" {
 		t.Errorf("a katalog-api without covers: %q, want the episode after the holder", got)
+	}
+}
+
+// A covered episode plays, with nothing new on chino-api's side: its play
+// routes take its id as they take any title's, behind the same gate, to
+// chino-stream, which asks katalog-api where it plays from and is answered
+// its holder's package, one package for the file. The master, a playlist and
+// a segment a client gets for the covered episode, with a stream token minted
+// as for any title (a capped viewer's too), are the holder's package's; the
+// covered episode's own id reaches chino-stream unchanged, and a capped
+// viewer's gate asks about it, not its holder.
+func TestACoveredEpisodePlaysItsHoldersPackage(t *testing.T) {
+	const holderDir = "series/5f/show/episodes/s05e15/versions/0b7e"
+	kat := newRecorder(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/items/s05e16":
+			_, _ = io.WriteString(w, `{"id":"s05e16","type":"episode","title":"Finale (2)","season_number":5,"episode_number":16,"parent_id":"show","coveredBy":"s05e15"}`)
+		case "/api/v1/items/s05e15/playback", "/api/v1/items/s05e16/playback":
+			// katalog-api's playback of a covered episode is its holder's,
+			// and names the holder.
+			id, holder := strings.Split(r.URL.Path, "/")[4], ""
+			if id == "s05e16" {
+				holder = `"coveredBy":"s05e15",`
+			}
+			_, _ = io.WriteString(w, `{"itemId":"`+id+`","type":"episode",`+holder+
+				`"package":{"versionId":"0b7e","dir":"`+holderDir+`","record":"package.json"},"previous":[],"original":null}`)
+		case "/api/v1/visible":
+			_, _ = io.WriteString(w, `{"ids":["s05e15","s05e16"]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	// chino-stream, as far as this goes: what plays is the package katalog-api
+	// names for the item.
+	stream := newRecorder(t, func(w http.ResponseWriter, r *http.Request) {
+		id, route, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/api/play/"), "/")
+		resp, err := http.Get(kat.URL + "/api/v1/items/" + id + "/playback")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		var pb struct {
+			Package *struct {
+				VersionID string `json:"versionId"`
+				Dir       string `json:"dir"`
+			} `json:"package"`
+		}
+		if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&pb) != nil || pb.Package == nil {
+			http.NotFound(w, r)
+			return
+		}
+		switch route {
+		case "master.m3u8":
+			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+			_, _ = io.WriteString(w, "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=4000000,CODECS=\"hvc1.2.4.L120.B0,mp4a.40.2\"\n"+
+				"v0/playlist.m3u8?v="+pb.Package.VersionID+"&"+r.URL.RawQuery+"\n## "+pb.Package.Dir+"\n")
+		case "v0/playlist.m3u8":
+			_, _ = io.WriteString(w, "#EXTM3U\n#EXTINF:6.0,\nseg-00001.m4s?"+r.URL.RawQuery+"\n## "+pb.Package.Dir+"\n")
+		case "v0/seg-00001.m4s":
+			_, _ = io.WriteString(w, "segment 1 of "+pb.Package.Dir)
+		case "info":
+			_, _ = io.WriteString(w, `{"duration_ms":5400000,"packaged":true}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	is := newIssuer(t)
+	h, err := NewRouter(config.Config{OIDCIssuer: is.URL, OIDCAudience: "chino", OIDCEnabled: true,
+		KatalogBaseURL: kat.URL, StreamBaseURL: stream.URL, ArtworkBaseURL: "http://katalog-manager.invalid",
+		StreamSigningKey: signingKey}, nil, eventsse.NewBroker())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		bearer http.Header
+		gate   string // what katalog-api is asked of the cap, once in its time
+	}{
+		{"a viewer", bearerWith(t, is, "viewer-1", nil), ""},
+		{"a viewer capped at 12", bearerWith(t, is, "kid-1", 12), "GET /api/v1/visible?ids=s05e16&max_rating=12"},
+	} {
+		kat.take()
+		w := do(h, "POST", "/api/v1/me/stream-token", tc.bearer)
+		var minted struct {
+			Token string `json:"stream_token"`
+		}
+		if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &minted) != nil || minted.Token == "" {
+			t.Fatalf("%s, the stream token: %d %s", tc.name, w.Code, w.Body)
+		}
+		w = do(h, "GET", "/api/v1/items/s05e16", tc.bearer)
+		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"coveredBy":"s05e15"`) {
+			t.Fatalf("%s, the covered episode's detail: %d %s", tc.name, w.Code, w.Body)
+		}
+		stream.take()
+
+		q := "?stream=" + minted.Token + "&caps=hvc:2160,aac"
+		for _, step := range []struct {
+			route, want string
+		}{
+			{"master.m3u8", "v0/playlist.m3u8?v=0b7e&stream=" + minted.Token},
+			{"v0/playlist.m3u8", "seg-00001.m4s?stream=" + minted.Token},
+			{"v0/seg-00001.m4s", "segment 1 of " + holderDir},
+			{"info", `"packaged":true`},
+		} {
+			w := do(h, "GET", "/api/v1/items/s05e16/play/"+step.route+q, nil)
+			if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), step.want) ||
+				(strings.HasSuffix(step.route, ".m3u8") && !strings.Contains(w.Body.String(), holderDir)) {
+				t.Errorf("%s, the covered episode's %s: %d %q, want the holder's package", tc.name, step.route, w.Code, w.Body)
+			}
+		}
+		got := stream.take()
+		if len(got) != 4 || !strings.HasPrefix(got[0], "GET /api/play/s05e16/master.m3u8?") || !strings.HasPrefix(got[2], "GET /api/play/s05e16/v0/seg-00001.m4s?") {
+			t.Errorf("%s: chino-stream got %q, want the covered episode's id", tc.name, got)
+		}
+		var gate []string
+		for _, r := range kat.take() {
+			if strings.Contains(r, "/api/v1/visible") {
+				gate = append(gate, r)
+			}
+		}
+		if tc.gate == "" && len(gate) != 0 || tc.gate != "" && (len(gate) != 1 || gate[0] != tc.gate) {
+			t.Errorf("%s: katalog-api was asked %q, want %q", tc.name, gate, tc.gate)
+		}
 	}
 }
