@@ -35,7 +35,7 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `GET /api/v1/people/{id}/profile` | bearer JWT or stream token | a person's portrait (`profile_url`) |
 | `GET /api/v1/me/continue-watching` | bearer JWT | resume list |
 | `GET /api/v1/me/watchlists` | bearer JWT | named watchlists |
-| `GET/POST /api/v1/items/{id}/progress` | bearer JWT | playback progress |
+| `GET/POST /api/v1/items/{id}/progress` | bearer JWT | playback progress, a file's ([below](#one-file-several-episodes)) |
 | `POST /api/v1/play/events` | bearer JWT or stream token | playback telemetry (the stream token for `sendBeacon`) |
 | `GET /api/v1/events` | bearer JWT or stream token | live catalog notifications (SSE) |
 | `GET /api/v1/notices` | bearer JWT | what addons told the signed-in person, from portal-api — best effort ([below](#notices)) |
@@ -205,6 +205,43 @@ streaming - come with its detail, `GET /api/v1/items/{id}`, beside
   group of its own once it exists on the cluster, asked every minute until
   then, so a cluster not provisioned for extras yet loses none of the other
   notes.
+
+### One file, several episodes
+
+A file can hold several episodes - a double-length finale listed as two -
+and is never split: it is packaged once, and the catalog names it on the
+episodes it holds. The first of them, the holder, keeps the file; each other
+is covered, keeps its own title, overview and artwork, and plays the
+holder's package. An episode's detail, the item, a series' episodes and every
+list carry it under the catalog's names:
+
+```json
+{"id": "e15", "type": "episode", "title": "Finale (1)", "season_number": 5, "episode_number": 15,
+ "covers": ["e16"], "episodeEnd": 16}
+{"id": "e16", "type": "episode", "title": "Finale (2)", "season_number": 5, "episode_number": 16,
+ "coveredBy": "e15"}
+```
+
+- `covers` (the others, in episode order) and `episodeEnd` (the last episode
+  number the file holds) are on the holder, `coveredBy` (the holder's id) on
+  each covered episode. Each is omitted on every other item, and while the
+  catalog sends none of them.
+- Progress and watched are the file's. A write for any episode of the file -
+  `POST /api/v1/items/{id}/progress`, `POST` and `DELETE
+  /api/v1/me/items/{id}/watched` - is written for each of them, the same
+  position, the same watched or unwatched. Reads stay per episode, and each
+  has the file's state. Which episodes a file holds chino-api asks the
+  catalog, and keeps a minute; when it cannot say, the write is the
+  episode's alone, as before.
+- The next episode after a file is the one after its last episode: `GET
+  /api/v1/series/{id}/next-episode`, and the up-next cards of Continue
+  Watching, never offer an episode of the file just watched. Continue
+  Watching has one card for a file: the holder's while it is unfinished.
+- Playback needs nothing new: a covered episode's play routes, with its own
+  id, serve the holder's package, and a capped viewer is held to the covered
+  episode's rating.
+- A client can show the holder as `S05E15–16` (`episode_number` to
+  `episodeEnd`), and a covered episode as part of it.
 
 ## Local development
 

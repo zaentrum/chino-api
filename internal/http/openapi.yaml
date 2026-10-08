@@ -1149,6 +1149,30 @@ components:
           type: string
           description: The certification's country, ISO 3166-1 alpha-2.
           example: US
+        coveredBy:
+          type: string
+          description: >
+            On an episode whose file is another's (one file that holds several
+            episodes, a double-length finale listed as two): the id of the
+            episode that holds the file, its holder, the first of them. It
+            plays the holder's package. The viewer's progress and watched
+            state are the file's: a write for any of its episodes is written
+            for each, and the next episode is the one after the file's last.
+            Omitted on every other item, as the catalog's name for it.
+        covers:
+          type: array
+          items: { type: string }
+          description: >
+            On the holder of a file that holds several episodes: the ids of
+            the others, in episode order. Omitted on every other item.
+        episodeEnd:
+          type: integer
+          description: >
+            On the holder of a file that holds several episodes: the last
+            episode number the file holds; a client can show the holder as
+            E15–16, from its episode number to episodeEnd. Omitted on every
+            other item.
+          example: 16
         genres:
           type: array
           items: { type: string }
