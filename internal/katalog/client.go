@@ -51,7 +51,8 @@ type Client struct {
 	HTTPStream *http.Client
 
 	// visible keeps katalog-api's answers of what a capped viewer may be
-	// served, and of the titles sidecar subtitles belong to (ratings.go).
+	// served, of the titles sidecar subtitles belong to (ratings.go), and of
+	// the episodes one file holds (files.go).
 	visible answers
 }
 

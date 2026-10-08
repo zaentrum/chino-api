@@ -43,11 +43,13 @@ type answers struct {
 	mu       sync.Mutex
 	visible  map[string]answer // "<cap>|<id>"
 	subtitle map[string]answer // subtitle id -> its title's id (answer.item)
+	file     map[string]answer // "<cap>|<id>" -> the episodes of its file (answer.items, files.go)
 }
 
 type answer struct {
 	visible bool
 	item    string
+	items   []string
 	until   time.Time
 }
 

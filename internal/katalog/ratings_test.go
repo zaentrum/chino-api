@@ -35,6 +35,11 @@ var catalogCalls = map[string]func(c *Client, ctx context.Context) error{
 		_, err := c.GetItemDetail(ctx, "tok", "m1")
 		return err
 	},
+	// The episodes of the file m2 plays, asked for by its item (files.go).
+	"/api/v1/items/m2": func(c *Client, ctx context.Context) error {
+		_, err := c.FileEpisodes(ctx, "tok", "m2")
+		return err
+	},
 	"/api/v1/items/m1/similar": func(c *Client, ctx context.Context) error {
 		_, err := c.ListSimilar(ctx, "tok", "m1", 5)
 		return err
