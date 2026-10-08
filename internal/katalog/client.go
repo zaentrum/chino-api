@@ -89,6 +89,18 @@ type Item struct {
 	EpisodeNumber *int   `json:"episode_number,omitempty"`
 	ParentID      string `json:"parent_id,omitempty"`
 
+	// One file that holds several episodes (a double-length finale listed as
+	// two), as katalog-api sends it, under its names: the file is the
+	// holder's, the first episode it holds, whose Covers are the others in
+	// episode order and whose EpisodeEnd is the last episode number the file
+	// holds; each of the others has CoveredBy, the holder's id, and plays the
+	// holder's package. A client can show the holder as E15–16
+	// (EpisodeNumber–EpisodeEnd). Omitted on every other item, and by a
+	// katalog-api that knows none of it.
+	CoveredBy  string   `json:"coveredBy,omitempty"`
+	Covers     []string `json:"covers,omitempty"`
+	EpisodeEnd *int     `json:"episodeEnd,omitempty"`
+
 	// MinAge is the age a viewer must be to be served the title (an admin's
 	// rating, else an episode's series', else its certification's); nil
 	// when nothing rates it, and a pointer so 0 survives the round-trip.
@@ -218,6 +230,12 @@ type upstreamItem struct {
 	EpisodeNumber *int    `json:"episode_number"`
 	ParentID      string  `json:"parent_id"`
 
+	// Set on the episodes of one file that holds several (Item's CoveredBy,
+	// Covers and EpisodeEnd); absent on every other item.
+	CoveredBy  string   `json:"coveredBy"`
+	Covers     []string `json:"covers"`
+	EpisodeEnd *int     `json:"episodeEnd"`
+
 	MinAge               *int   `json:"min_age"`
 	Certification        string `json:"certification"`
 	CertificationCountry string `json:"certification_country"`
@@ -266,6 +284,9 @@ func (u upstreamItem) toItem() Item {
 		SeasonNumber:  u.SeasonNumber,
 		EpisodeNumber: u.EpisodeNumber,
 		ParentID:      u.ParentID,
+		CoveredBy:     u.CoveredBy,
+		Covers:        u.Covers,
+		EpisodeEnd:    u.EpisodeEnd,
 		MinAge:        u.MinAge,
 		PosterURL:     "/api/v1/items/" + u.ID + "/poster",
 		BackdropURL:   "/api/v1/items/" + u.ID + "/backdrop",

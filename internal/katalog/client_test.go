@@ -161,3 +161,74 @@ func TestItemDetailCarriesTheExtrasWithTheirPlayPath(t *testing.T) {
 	}
 	sameJSON(t, "trailers without extras", it.Trailers, trailers)
 }
+
+// fileFields are the fields of it, as a client gets it, that say which file
+// it plays: coveredBy, covers and episodeEnd, those it has.
+func fileFields(t *testing.T, it any) map[string]json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(it)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]json.RawMessage{}
+	for _, k := range []string{"coveredBy", "covers", "episodeEnd"} {
+		if v, ok := fields[k]; ok {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// The episodes of one file come through as katalog-api sends them, under its
+// names: the holder with covers (the others, in episode order) and
+// episodeEnd, each episode it covers with coveredBy, on an item's detail, an
+// item and a series' episodes alike. An episode with a file of its own, and
+// the answer of a katalog-api that knows none of it, have none of the three.
+func TestTheEpisodesOfOneFileComeThrough(t *testing.T) {
+	const (
+		holder  = `{"id":"e15","type":"episode","title":"Finale (1)","season_number":5,"episode_number":15,"parent_id":"s1","covers":["e16","e17"],"episodeEnd":17}`
+		covered = `{"id":"e16","type":"episode","title":"Finale (2)","season_number":5,"episode_number":16,"parent_id":"s1","coveredBy":"e15"}`
+		third   = `{"id":"e17","type":"episode","title":"Finale (3)","season_number":5,"episode_number":17,"parent_id":"s1","coveredBy":"e15"}`
+		single  = `{"id":"e14","type":"episode","title":"Before","season_number":5,"episode_number":14,"parent_id":"s1"}`
+	)
+	up := newUpstream(t, map[string]string{
+		"/api/v1/items/e14":          single,
+		"/api/v1/items/e15":          holder,
+		"/api/v1/items/e16":          covered,
+		"/api/v1/series/s1/episodes": `{"items":[` + single + `,` + holder + `,` + covered + `,` + third + `]}`,
+	})
+	kc := New(up.URL)
+	ctx := context.Background()
+	want := map[string]string{
+		"e14": `{}`,
+		"e15": `{"covers":["e16","e17"],"episodeEnd":17}`,
+		"e16": `{"coveredBy":"e15"}`,
+		"e17": `{"coveredBy":"e15"}`,
+	}
+	for _, id := range []string{"e14", "e15", "e16"} {
+		detail, err := kc.GetItemDetail(ctx, "tok", id)
+		if err != nil || detail == nil {
+			t.Fatalf("%s detail: %v %v", id, detail, err)
+		}
+		sameJSON(t, id+"'s detail", fileFields(t, detail), want[id])
+		it, err := kc.GetItem(ctx, "tok", id)
+		if err != nil || it == nil {
+			t.Fatalf("%s: %v %v", id, it, err)
+		}
+		sameJSON(t, id, fileFields(t, it), want[id])
+	}
+	eps, err := kc.ListSeriesEpisodes(ctx, "tok", "s1")
+	if err != nil || len(eps) != 4 {
+		t.Fatalf("the series' episodes: %v %v", eps, err)
+	}
+	for _, e := range eps {
+		sameJSON(t, e.ID+" in the series' episodes", fileFields(t, e), want[e.ID])
+	}
+	if e := eps[1]; e.EpisodeEnd == nil || *e.EpisodeEnd != 17 || strings.Join(e.Covers, " ") != "e16 e17" || e.CoveredBy != "" {
+		t.Errorf("the holder: %+v", e)
+	}
+}
