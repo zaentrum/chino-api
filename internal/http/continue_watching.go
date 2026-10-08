@@ -3,6 +3,7 @@ package http
 import (
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/zaentrum/chino-api/internal/auth"
 	"github.com/zaentrum/chino-api/internal/katalog"
@@ -39,6 +40,11 @@ type continueWatchingItem struct {
 //     substituted card has position 0, no progress bar (UpNext=true),
 //     and clicking plays from the start. If the just-finished episode
 //     was the last of the series, the row is dropped.
+//
+// The episodes of one file that holds several (a double-length finale
+// listed as two) have a row each, the same position, and are one card: an
+// unfinished one the holder's, a finished one the episode after the file's
+// last.
 func continueWatching(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := auth.SubjectFromContext(r.Context())
@@ -89,8 +95,12 @@ func continueWatching(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 			// could collide with an actual in-progress ep6 row from
 			// another series we haven't started, or with an older
 			// finished ep4 → ep5 if the user keeps re-watching the
-			// pilot. Keep the first (most recent).
+			// pilot. Keep the first (most recent). An episode another's
+			// file covers is that file's card: by its holder's id.
 			id := out[i].Item.ID
+			if out[i].Item.CoveredBy != "" {
+				id = out[i].Item.CoveredBy
+			}
 			if seen[id] {
 				continue
 			}
@@ -116,13 +126,22 @@ func continueWatching(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 // finished episode with no follow-up).
 func buildCWEntry(r *http.Request, kc *katalog.Client, st *store.Store, userID, bearer string, item *katalog.Item, p store.ProgressRow) (continueWatchingItem, bool) {
 	if !p.Finished {
+		// The card of an episode another's file covers is the file's, its
+		// holder's: the file starts there and its numbers run to the
+		// holder's episodeEnd. Each episode of the file has this position.
+		card := *item
+		if item.CoveredBy != "" {
+			if holder, herr := kc.GetItem(r.Context(), bearer, item.CoveredBy); herr == nil && holder != nil {
+				card = *holder
+			}
+		}
 		entry := continueWatchingItem{
-			Item:        *item,
+			Item:        card,
 			PositionSec: p.PositionSec,
 			DurationSec: p.DurationSec,
 		}
-		if item.Type == "episode" && item.ParentID != "" {
-			if parent, perr := kc.GetItem(r.Context(), bearer, item.ParentID); perr == nil && parent != nil {
+		if card.Type == "episode" && card.ParentID != "" {
+			if parent, perr := kc.GetItem(r.Context(), bearer, card.ParentID); perr == nil && parent != nil {
 				entry.SeriesTitle = parent.Title
 			}
 		}
@@ -137,32 +156,43 @@ func buildCWEntry(r *http.Request, kc *katalog.Client, st *store.Store, userID, 
 	if err != nil || len(eps) == 0 {
 		return continueWatchingItem{}, false
 	}
-	nextIdx := -1
+	at := -1
 	for i, e := range eps {
 		if e.ID == item.ID {
-			nextIdx = i + 1
+			at = i
 			break
 		}
 	}
-	if nextIdx <= 0 || nextIdx >= len(eps) {
-		// Just-watched ep wasn't found in the series listing, or it was
-		// the last episode. Either way, no continuation card.
+	if at < 0 {
+		// Just-watched ep wasn't found in the series listing: no
+		// continuation card.
+		return continueWatchingItem{}, false
+	}
+	// The next is after the file just watched: after its last episode,
+	// when it holds several, so none of them is the next.
+	f := filesOf(eps)
+	nextIdx := fileEnd(eps, f, at) + 1
+	if nextIdx >= len(eps) {
+		// It was the last episode (or file) of the series: no card.
 		return continueWatchingItem{}, false
 	}
 	// Walk forward to the first UNWATCHED episode after the finished
 	// one. Without this, a user who's already binged the whole series
 	// once gets that finished episode's immediate next neighbour back
 	// on the Next Up rail — even though they finished THAT too. So we
-	// skip ahead until we find something genuinely fresh.
+	// skip ahead until we find something genuinely fresh. File by file:
+	// a file one of whose episodes is watched was watched.
 	candidateIDs := make([]string, 0, len(eps)-nextIdx)
 	for j := nextIdx; j < len(eps); j++ {
 		candidateIDs = append(candidateIDs, eps[j].ID)
 	}
 	watched, _ := st.WatchedAtBatch(r.Context(), userID, candidateIDs)
-	for ; nextIdx < len(eps); nextIdx++ {
-		if _, alreadyWatched := watched[eps[nextIdx].ID]; !alreadyWatched {
+	for nextIdx < len(eps) {
+		end := fileEnd(eps, f, nextIdx)
+		if !watchedFile(eps, f, nextIdx, end, watched) {
 			break
 		}
+		nextIdx = end + 1
 	}
 	if nextIdx >= len(eps) {
 		// Series fully watched — no card to surface.
@@ -179,6 +209,20 @@ func buildCWEntry(r *http.Request, kc *katalog.Client, st *store.Store, userID, 
 		entry.SeriesTitle = parent.Title
 	}
 	return entry, true
+}
+
+// watchedFile reports whether the file eps[i] plays was watched: one of its
+// episodes from i to end (fileEnd) is. One play watches each episode of a
+// file, and one watched before its file was known to hold several stands
+// for the file.
+func watchedFile(eps []katalog.Item, f files, i, end int, watched map[string]time.Time) bool {
+	h := f.holder(eps[i].ID)
+	for j := i; j <= end; j++ {
+		if _, ok := watched[eps[j].ID]; ok && f.holder(eps[j].ID) == h {
+			return true
+		}
+	}
+	return false
 }
 
 // cwItems returns pointers to the Item field of each entry so

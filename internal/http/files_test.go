@@ -14,6 +14,7 @@ import (
 
 	"github.com/zaentrum/chino-api/internal/config"
 	"github.com/zaentrum/chino-api/internal/eventsse"
+	"github.com/zaentrum/chino-api/internal/katalog"
 	"github.com/zaentrum/chino-api/internal/store"
 )
 
@@ -416,5 +417,256 @@ func TestWithoutAnAnswerOfTheFileAWriteIsTheEpisodesAlone(t *testing.T) {
 		if got := watchedOf(t, st, user, "s05e15", "s05e16"); got != "s05e15" {
 			t.Errorf("%s, unwatched: %q", tc.name, got)
 		}
+	}
+}
+
+// asItems is eps as the katalog client reads them.
+func asItems(t *testing.T, eps []fileEpisode) []katalog.Item {
+	t.Helper()
+	raw, err := json.Marshal(eps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []katalog.Item
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// A file ends with the last of its episodes listed: the holder's and each
+// covered episode's at the last of them, an episode with a file of its own at
+// itself, whether katalog-api names the file on the holder (covers), on each
+// covered episode (coveredBy) or on both. With neither, each episode is a
+// file of its own.
+func TestAFileEndsWithItsLastEpisode(t *testing.T) {
+	eps := filed("show", "S05E14", "S05E15-E16", "S05E17-E19", "S05E20")
+	holderOnly := append([]fileEpisode(nil), eps...)
+	coveredOnly := append([]fileEpisode(nil), eps...)
+	plain := append([]fileEpisode(nil), eps...)
+	for i := range eps {
+		holderOnly[i].CoveredBy = ""
+		coveredOnly[i].Covers = nil
+		plain[i].CoveredBy, plain[i].Covers = "", nil
+	}
+	for _, tc := range []struct {
+		name string
+		eps  []fileEpisode
+		ends []int
+	}{
+		{"both", eps, []int{0, 2, 2, 5, 5, 5, 6}},
+		{"on the holder", holderOnly, []int{0, 2, 2, 5, 5, 5, 6}},
+		{"on the covered", coveredOnly, []int{0, 2, 2, 5, 5, 5, 6}},
+		{"neither", plain, []int{0, 1, 2, 3, 4, 5, 6}},
+	} {
+		items := asItems(t, tc.eps)
+		f := filesOf(items)
+		for i, want := range tc.ends {
+			if got := fileEnd(items, f, i); got != want {
+				t.Errorf("%s: the file of %s ends at %d, want %d", tc.name, items[i].ID, got, want)
+			}
+		}
+	}
+}
+
+// GET /api/v1/series/{id}/next-episode?after= is the episode after the
+// anchor's file: after the last episode of a file that holds several, from
+// its holder and from each episode it covers alike, so none of them is the
+// next; the holder is the next of the episode before it, and the first of a
+// series that begins with such a file. Inside season 0 a special's file is
+// followed by the next special, or the first regular episode. A katalog-api
+// that names no covers has each episode the next of the one before, as
+// before.
+func TestTheNextEpisodeIsAfterTheFile(t *testing.T) {
+	kat := newFileCatalog(t, map[string][]string{
+		"show": {"S05E14", "S05E15-E16", "S05E17-E19", "S05E20-E21"},
+		"saga": {"S00E01-E02", "S01E01-E02", "S01E03"},
+	})
+	h := router(t, kat.URL, "http://katalog-manager.invalid", false)
+	next := func(t *testing.T, series, after string) string {
+		t.Helper()
+		path := "/api/v1/series/" + series + "/next-episode"
+		if after != "" {
+			path += "?after=" + after
+		}
+		w := do(h, "GET", path, nil)
+		var got struct {
+			Next   *katalog.Item `json:"next"`
+			Anchor string        `json:"anchor"`
+			Reason string        `json:"reason"`
+		}
+		if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &got) != nil {
+			t.Fatalf("%s: %d %s", path, w.Code, w.Body)
+		}
+		if got.Next == nil {
+			return got.Reason
+		}
+		if after != "" && got.Anchor != after {
+			t.Errorf("%s: anchor %q, want the episode asked about", path, got.Anchor)
+		}
+		return got.Next.ID
+	}
+	for _, tc := range []struct {
+		series, after, files, plain string
+	}{
+		{"show", "s05e14", "s05e15", "s05e15"},
+		{"show", "s05e15", "s05e17", "s05e16"},
+		{"show", "s05e16", "s05e17", "s05e17"},
+		{"show", "s05e17", "s05e20", "s05e18"},
+		{"show", "s05e18", "s05e20", "s05e19"},
+		{"show", "s05e19", "s05e20", "s05e20"},
+		{"show", "s05e20", "end_of_series", "s05e21"},
+		{"show", "s05e21", "end_of_series", "end_of_series"},
+		{"saga", "", "s01e01", "s01e01"},
+		{"saga", "s00e01", "s01e01", "s00e02"},
+		{"saga", "s00e02", "s01e01", "s01e01"},
+		{"saga", "s01e01", "s01e03", "s01e02"},
+		{"saga", "s01e02", "s01e03", "s01e03"},
+	} {
+		kat.set(false, false)
+		if got := next(t, tc.series, tc.after); got != tc.files {
+			t.Errorf("%s after %q: %s, want %s", tc.series, tc.after, got, tc.files)
+		}
+		kat.set(true, false)
+		if got := next(t, tc.series, tc.after); got != tc.plain {
+			t.Errorf("%s after %q, a katalog-api without covers: %s, want %s", tc.series, tc.after, got, tc.plain)
+		}
+	}
+}
+
+// cwCard is a card of continue watching, as a client reads it.
+type cwCard struct {
+	ID          string `json:"id"`
+	PositionSec int    `json:"position_sec"`
+	UpNext      bool   `json:"up_next"`
+	SeriesTitle string `json:"series_title"`
+}
+
+// continueCards is the viewer of header's continue watching.
+func continueCards(t *testing.T, h http.Handler, header http.Header) []cwCard {
+	t.Helper()
+	w := do(h, "GET", "/api/v1/me/continue-watching", header)
+	var body struct {
+		Items []cwCard `json:"items"`
+	}
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &body) != nil {
+		t.Fatalf("continue watching: %d %s", w.Code, w.Body)
+	}
+	return body.Items
+}
+
+// Continue watching has one card for the episodes of one file. While the
+// file is unfinished, the holder's, with the position they share, after a
+// write for any of them; once it is finished, the episode after the file's
+// last - never one of the file - or after the next file that is not watched.
+// An episode watched before its file was known to hold several stands for the
+// file. The next episode of the series is after the file too. A katalog-api
+// that names no covers has the rows of each episode cards as before.
+func TestContinueWatchingHasOneCardForAFile(t *testing.T) {
+	st := testStore(t)
+	is := newIssuer(t)
+	kat := newFileCatalog(t, map[string][]string{
+		"show": {"S05E14", "S05E15-E16", "S05E17"},
+		"saga": {"S06E01-E03", "S06E04"},
+	})
+	h := filesRouter(t, is, kat.URL, st)
+	ctx := context.Background()
+	card := func(c cwCard) string {
+		s := c.ID + "@" + strconv.Itoa(c.PositionSec)
+		if c.UpNext {
+			s += " up next"
+		}
+		return s
+	}
+	cards := func(t *testing.T, h http.Handler, header http.Header) string {
+		t.Helper()
+		var out []string
+		for _, c := range continueCards(t, h, header) {
+			out = append(out, card(c))
+			if c.SeriesTitle == "" {
+				t.Errorf("%s: no series title", c.ID)
+			}
+		}
+		return strings.Join(out, ", ")
+	}
+	post := func(t *testing.T, h http.Handler, header http.Header, id string, pos, dur int) {
+		t.Helper()
+		body := fmt.Sprintf(`{"position_sec":%d,"duration_sec":%d}`, pos, dur)
+		if w := send(h, "POST", "/api/v1/items/"+id+"/progress", header, body); w.Code != http.StatusNoContent {
+			t.Fatalf("%s's progress: %d %s", id, w.Code, w.Body)
+		}
+	}
+
+	// Unfinished: the holder's card, from a write for the episode it covers.
+	viewer := bearerWith(t, is, "viewer-1", nil)
+	post(t, h, viewer, "s05e16", 600, 2700)
+	if got := cards(t, h, viewer); got != "s05e15@600" {
+		t.Errorf("an unfinished file: %q, want the holder's card", got)
+	}
+	// A file of three, from the episode in the middle; the most recent first.
+	post(t, h, viewer, "s06e02", 100, 7200)
+	if got := cards(t, h, viewer); got != "s06e01@100, s05e15@600" {
+		t.Errorf("two unfinished files: %q", got)
+	}
+
+	// Finished, by a write for the covered episode and its watched: the
+	// episode after the file.
+	finished := bearerWith(t, is, "viewer-2", nil)
+	post(t, h, finished, "s05e16", 2690, 2700)
+	if w := do(h, "POST", "/api/v1/me/items/s05e16/watched", finished); w.Code != http.StatusNoContent {
+		t.Fatalf("watched: %d %s", w.Code, w.Body)
+	}
+	if got := cards(t, h, finished); got != "s05e17@0 up next" {
+		t.Errorf("a finished file: %q, want the episode after it", got)
+	}
+	w := do(h, "GET", "/api/v1/series/show/next-episode", finished)
+	if !strings.Contains(w.Body.String(), `"next":{"id":"s05e17"`) {
+		t.Errorf("the next episode after the file the viewer left: %d %s", w.Code, w.Body)
+	}
+
+	// Rows of the holder alone, written before its file was known to hold
+	// two: the next is after the file all the same, not its covered episode.
+	legacy := "viewer-3"
+	if err := st.SaveProgress(ctx, legacy, []string{"s05e15"}, 2690, 2700); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkWatched(ctx, legacy, "s05e15"); err != nil {
+		t.Fatal(err)
+	}
+	if got := cards(t, h, bearerWith(t, is, legacy, nil)); got != "s05e17@0 up next" {
+		t.Errorf("a file watched as its holder alone: %q, want the episode after it", got)
+	}
+
+	// The walk past what is watched goes file by file: after S05E14 the file
+	// S05E15-E16, watched as its holder alone, is passed whole.
+	walk := "viewer-4"
+	if err := st.SaveProgress(ctx, walk, []string{"s05e14"}, 1290, 1300); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkWatched(ctx, walk, "s05e15"); err != nil {
+		t.Fatal(err)
+	}
+	if got := cards(t, h, bearerWith(t, is, walk, nil)); got != "s05e17@0 up next" {
+		t.Errorf("after an episode, a watched file: %q, want the episode after the file", got)
+	}
+	// A finished file whose next episode is watched, the last of its series:
+	// no card for it.
+	if err := st.SaveProgress(ctx, walk, []string{"s06e01", "s06e02", "s06e03"}, 7190, 7200); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkWatched(ctx, walk, "s06e04"); err != nil {
+		t.Fatal(err)
+	}
+	if got := cards(t, h, bearerWith(t, is, walk, nil)); got != "s05e17@0 up next" {
+		t.Errorf("a series watched to its end: %q", got)
+	}
+
+	// A katalog-api without covers: each episode's rows are its own cards,
+	// as before - the holder finished, its next the episode it covered.
+	plain := newFileCatalog(t, map[string][]string{"show": {"S05E14", "S05E15-E16", "S05E17"}})
+	plain.set(true, false)
+	hp := filesRouter(t, is, plain.URL, st)
+	if got := cards(t, hp, bearerWith(t, is, legacy, nil)); got != "s05e16@0 up next" {
+		t.Errorf("a katalog-api without covers: %q, want the episode after the holder", got)
 	}
 }

@@ -68,6 +68,10 @@ func seriesEpisodes(kc *katalog.Client, st *store.Store) http.HandlerFunc {
 // most recent playback_progress row for any episode of this series; if
 // nothing matches, fall back to the first episode, S01E01.
 //
+// The next episode is after the anchor's file: after the last episode of a
+// file that holds several (a double-length finale listed as two), from any
+// of them, so an episode the file covers is never the next of the file.
+//
 // Specials (season 0) are neither the first nor the next episode unless
 // the viewer is inside season 0 already: katalog lists them first, so a
 // series nobody had started used to begin with a special. 404 when katalog
@@ -123,7 +127,7 @@ func nextEpisode(kc *katalog.Client, st *store.Store) http.HandlerFunc {
 			writeJSON(w, http.StatusOK, map[string]any{"next": eps[firstEpisode(eps)]})
 			return
 		}
-		next := episodeAfter(eps, anchorIdx)
+		next := episodeAfter(eps, fileEnd(eps, filesOf(eps), anchorIdx))
 		if next < 0 {
 			writeJSON(w, http.StatusOK, map[string]any{"next": nil, "reason": "end_of_series"})
 			return
@@ -165,6 +169,48 @@ func episodeAfter(eps []katalog.Item, anchor int) int {
 		}
 	}
 	return -1
+}
+
+// files says which of a series' episodes share one file, as katalog-api
+// names them (a holder's covers, a covered episode's coveredBy): each
+// episode's holder, the episode whose file it plays, by id. An episode with
+// a file of its own is not in it, and nothing is for a katalog-api that
+// names no covers.
+type files map[string]string
+
+func filesOf(eps []katalog.Item) files {
+	f := files{}
+	for _, e := range eps {
+		for _, c := range e.Covers {
+			f[c] = e.ID
+		}
+		if e.CoveredBy != "" {
+			f[e.ID] = e.CoveredBy
+		}
+	}
+	return f
+}
+
+// holder is the episode whose file the episode id plays: its holder, else
+// id itself.
+func (f files) holder(id string) string {
+	if h, ok := f[id]; ok {
+		return h
+	}
+	return id
+}
+
+// fileEnd is the index in eps of the last episode of the file eps[i] plays:
+// i, unless the file holds several episodes, then the one of them listed
+// last.
+func fileEnd(eps []katalog.Item, f files, i int) int {
+	end, h := i, f.holder(eps[i].ID)
+	for j := i + 1; j < len(eps); j++ {
+		if f.holder(eps[j].ID) == h {
+			end = j
+		}
+	}
+	return end
 }
 
 func episodeIDs(eps []katalog.Item) []string {
