@@ -102,6 +102,13 @@ type Item struct {
 	Covers     []string `json:"covers,omitempty"`
 	EpisodeEnd *int     `json:"episodeEnd,omitempty"`
 
+	// FileDurationMs is how long the file a holder plays is, as measured (the
+	// package's duration, PlayInfoDurationMs): the one thing to play for the
+	// episodes it holds, and its length is not any one episode's DurationMs.
+	// Set by chino-api in a series' episode list, on holders alone; omitted
+	// where the file's length is not known.
+	FileDurationMs int64 `json:"file_duration_ms,omitempty"`
+
 	// MinAge is the age a viewer must be to be served the title (an admin's
 	// rating, else an episode's series', else its certification's); nil
 	// when nothing rates it, and a pointer so 0 survives the round-trip.

@@ -242,6 +242,10 @@ list carry it under the catalog's names:
   episode's rating.
 - A client can show the holder as `S05E15–16` (`episode_number` to
   `episodeEnd`), and a covered episode as part of it.
+- In a series' episode list (`GET /api/v1/series/{id}/episodes`) the holder
+  carries `file_duration_ms`: how long its file is, as chino-stream measured
+  it from the package. A client shows the file as one entry of that length
+  around the episodes it holds; `duration_ms` stays each episode's own.
 
 ## Local development
 

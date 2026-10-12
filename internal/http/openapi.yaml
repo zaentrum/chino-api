@@ -1173,6 +1173,16 @@ components:
             E15–16, from its episode number to episodeEnd. Omitted on every
             other item.
           example: 16
+        file_duration_ms:
+          type: integer
+          format: int64
+          description: >
+            In a series' episode list, on the holder of a file that holds
+            several episodes: how long that file is, as measured from its
+            package - the length of the one thing that plays, not of any one
+            episode (duration_ms). Omitted on every other item, and where the
+            file's length is not known.
+          example: 2766000
         genres:
           type: array
           items: { type: string }

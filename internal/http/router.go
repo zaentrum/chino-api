@@ -114,7 +114,7 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// same poster + watched_at enrichment as the browse lists.
 			r.Get("/people", searchPeople(kc))
 			r.Get("/people/{id}", getPerson(st, kc))
-			r.With(title).Get("/series/{id}/episodes", seriesEpisodes(kc, st))
+			r.With(title).Get("/series/{id}/episodes", seriesEpisodes(kc, streamKC, st))
 			r.With(title).Get("/series/{id}/next-episode", nextEpisode(kc, st))
 			r.Get("/genres", listGenres(kc))
 			r.With(title).Get("/items/{id}/subtitles", subtitlesList(kc))

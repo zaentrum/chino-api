@@ -797,3 +797,56 @@ func TestACoveredEpisodePlaysItsHoldersPackage(t *testing.T) {
 		}
 	}
 }
+
+// In a series' episode list a holder carries how long its file is, as
+// chino-stream measured it: the file is the one thing to play for the
+// episodes it holds, and its length is not any one episode's. No other
+// episode carries it, and a file whose length is not known goes without.
+func TestAHolderCarriesItsFilesLength(t *testing.T) {
+	kat := newFileCatalog(t, map[string][]string{"show": {"S05E14", "S05E15-E16", "S05E17", "S05E18-E21"}})
+	var asked []string
+	var mu sync.Mutex
+	stream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		asked = append(asked, r.URL.Path)
+		mu.Unlock()
+		switch r.URL.Path {
+		case "/api/play/s05e15/info":
+			_, _ = io.WriteString(w, `{"duration_ms":2766000,"packaged":true}`)
+		default: // s05e18's file: not packaged yet
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(stream.Close)
+	h, err := NewRouter(config.Config{KatalogBaseURL: kat.URL, StreamBaseURL: stream.URL,
+		ArtworkBaseURL: "http://katalog-manager.invalid"}, nil, eventsse.NewBroker())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w := do(h, "GET", "/api/v1/series/show/episodes", nil)
+	var list struct {
+		Seasons []struct {
+			Episodes []struct {
+				ID             string `json:"id"`
+				FileDurationMs *int64 `json:"file_duration_ms"`
+			} `json:"episodes"`
+		} `json:"seasons"`
+	}
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &list) != nil || len(list.Seasons) != 1 {
+		t.Fatalf("the series' episodes: %d %s", w.Code, w.Body)
+	}
+	got := map[string]int64{}
+	for _, e := range list.Seasons[0].Episodes {
+		if e.FileDurationMs != nil {
+			got[e.ID] = *e.FileDurationMs
+		}
+	}
+	if len(got) != 1 || got["s05e15"] != 2766000 {
+		t.Errorf("file lengths %v, want s05e15's alone (2766000)", got)
+	}
+	sort.Strings(asked)
+	if strings.Join(asked, " ") != "/api/play/s05e15/info /api/play/s05e18/info" {
+		t.Errorf("chino-stream was asked %v, want the two holders once each", asked)
+	}
+}

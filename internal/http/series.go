@@ -1,8 +1,11 @@
 package http
 
 import (
+	"context"
 	"net/http"
 	"sort"
+	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -15,7 +18,7 @@ import (
 // The Series detail page renders each season as an accordion / list. 404
 // when katalog-api has no such series, or the viewer's rating cap leaves it
 // out; the episodes the cap leaves out are not listed.
-func seriesEpisodes(kc *katalog.Client, st *store.Store) http.HandlerFunc {
+func seriesEpisodes(kc, streamKC *katalog.Client, st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 		bearer := bearerFrom(r)
@@ -33,6 +36,7 @@ func seriesEpisodes(kc *katalog.Client, st *store.Store) http.HandlerFunc {
 		// EpisodesList can render a checkmark next to ones they've
 		// finished. stampWatchedSlice no-ops if userID / st is empty.
 		stampWatchedSlice(r.Context(), st, userID, eps)
+		stampFileDurations(r.Context(), streamKC, bearer, eps)
 		// Group by season.
 		seasonMap := map[int][]katalog.Item{}
 		for _, e := range eps {
@@ -60,6 +64,34 @@ func seriesEpisodes(kc *katalog.Client, st *store.Store) http.HandlerFunc {
 			"count":     len(eps),
 		})
 	}
+}
+
+// fileDurationWait is how long a series' episode list waits for the lengths
+// of its files of several episodes: a list is not held up by them.
+const fileDurationWait = 3 * time.Second
+
+// stampFileDurations sets FileDurationMs on each holder among eps - an
+// episode whose file holds others too - to the file's measured length, asked
+// of chino-stream once per file, all at once. A length that is not known in
+// time stays unset: the client shows the list without it.
+func stampFileDurations(ctx context.Context, streamKC *katalog.Client, bearer string, eps []katalog.Item) {
+	if streamKC == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, fileDurationWait)
+	defer cancel()
+	var wg sync.WaitGroup
+	for i := range eps {
+		if len(eps[i].Covers) == 0 {
+			continue
+		}
+		wg.Add(1)
+		go func(e *katalog.Item) {
+			defer wg.Done()
+			e.FileDurationMs = streamKC.PlayInfoDurationMs(ctx, bearer, e.ID)
+		}(&eps[i])
+	}
+	wg.Wait()
 }
 
 // nextEpisode picks the next episode after the one the user is currently
