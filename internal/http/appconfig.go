@@ -32,8 +32,22 @@ func appConfig(cfg config.Config) http.HandlerFunc {
 				"web":    cfg.OIDCClientIDWeb,
 				"portal": cfg.OIDCClientIDPortal,
 			},
+			// What this server offers that a client should show only when
+			// it does. feedback: POST /api/v1/feedback files bug reports
+			// (it answers 503 when this is false).
+			"features": map[string]bool{
+				"feedback": feedbackEnabled(cfg),
+			},
 		})
 	}
+}
+
+// feedbackEnabled says whether bug reports can be filed: only with an
+// OpenProject token configured. The router builds the OpenProject client on
+// the same condition, so /api/config never promises what the endpoint
+// refuses.
+func feedbackEnabled(cfg config.Config) bool {
+	return strings.TrimSpace(cfg.OpenProjectToken) != ""
 }
 
 // publicAPIBase reports the external "<origin>/api" this server is reached

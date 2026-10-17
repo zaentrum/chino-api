@@ -72,7 +72,7 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 	// is configured — postFeedback answers 503 and the clients treat
 	// the feature as off.
 	var op *openproject.Client
-	if cfg.OpenProjectToken != "" {
+	if feedbackEnabled(cfg) { // what /api/config reports as features.feedback
 		op = openproject.New(cfg.OpenProjectURL, cfg.OpenProjectToken, cfg.OpenProjectProjectID, cfg.OpenProjectBugTypeID)
 	}
 

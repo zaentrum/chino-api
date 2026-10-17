@@ -313,7 +313,9 @@ the next. The request log shows credential values as `REDACTED`.
 
 When `PG_URL` is empty, progress and telemetry endpoints answer gracefully but
 do not persist — keeps local dev simple. When `OPENPROJECT_TOKEN` is empty the
-feedback endpoint answers 503 and clients keep the feature off.
+feedback endpoint answers 503 and clients keep the feature off: `GET /api/config`
+says so in `features.feedback` (`true` only with a token), so a client can hide
+its bug-report entry points before anyone tries.
 
 ## Configuration
 
