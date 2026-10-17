@@ -120,10 +120,22 @@ func Handler() http.Handler {
 }
 
 // OnPlayerEvent bumps the right counters for one telemetry event. Called
-// from the telemetry POST handler.
-func OnPlayerEvent(kind string, payload map[string]any) {
+// from the telemetry POST handler, with the User-Agent of the request: the
+// device class of a player that does not name its client (qoe.go). Every
+// kind is counted in PlayerEvents; the playback-quality kinds (first_frame,
+// startup_timeout, rebuffer, bandwidth) also feed qoe.go's metrics, their
+// values checked and capped there.
+func OnPlayerEvent(kind string, payload map[string]any, userAgent string) {
 	PlayerEvents.WithLabelValues(kind).Inc()
 	switch kind {
+	case "first_frame":
+		observeStartup(payload)
+	case "startup_timeout":
+		StartupTimeouts.WithLabelValues(modeLabel(payload), phaseLabel(payload)).Inc()
+	case "rebuffer":
+		observeRebuffer(payload)
+	case "bandwidth":
+		observeBandwidth(payload, userAgent)
 	case "media_error":
 		code, _ := payload["name"].(string)
 		if code == "" {

@@ -51,7 +51,7 @@ func postTelemetry(w http.ResponseWriter, r *http.Request) {
 	for _, e := range b.Events {
 		// Bump Prometheus counters first so the dashboard updates even
 		// when the log aggregator is behind.
-		metrics.OnPlayerEvent(e.Kind, e.Payload)
+		metrics.OnPlayerEvent(e.Kind, e.Payload, r.UserAgent())
 
 		line := map[string]any{
 			"src":       "player",
