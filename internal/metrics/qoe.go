@@ -46,11 +46,21 @@ var (
 		Buckets: []float64{0.1, 0.25, 0.5, 1, 2, 4, 8, 15, 30, 60},
 	}, []string{"mode"})
 
-	// From bandwidth: the player's own estimate while it plays.
+	// From bandwidth: the player's own estimate while it plays. It leaves
+	// out the wait for a segment's first byte, which SegmentTTFBSeconds
+	// below has: a long link and a slow origin both show there.
 	BandwidthMbps = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "chino_player_bandwidth_mbps",
 		Help:    "The player's bandwidth estimate while playing, in Mbit/s, by device class.",
 		Buckets: []float64{1, 2, 4, 8, 15, 25, 40, 80},
+	}, []string{"device"})
+
+	// From bandwidth: how long the last video segment took to its first
+	// byte - the round trip and the time the origin took to start answering.
+	SegmentTTFBSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "chino_player_segment_ttfb_seconds",
+		Help:    "Time to the first byte of the last video segment the player loaded, by device class.",
+		Buckets: []float64{0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8},
 	}, []string{"device"})
 )
 
@@ -60,6 +70,7 @@ const (
 	maxStartupSeconds  = 600    // 10 min: the player gives up after 20 s of trying
 	maxRebufferSeconds = 3600   // an hour standing still
 	maxBandwidthMbps   = 10_000 // 10 Gbit/s
+	maxTTFBSeconds     = 600    // the player gives up on a segment long before
 )
 
 var (
@@ -99,13 +110,19 @@ func observeRebuffer(p map[string]any) {
 }
 
 func observeBandwidth(p map[string]any, userAgent string) {
+	client, _ := p["client"].(string)
+	device := deviceClass(client, userAgent)
+	if ms, ok := number(p, "frag_ttfb_ms"); ok {
+		if s, ok := clamped(ms/1000, maxTTFBSeconds); ok {
+			SegmentTTFBSeconds.WithLabelValues(device).Observe(s)
+		}
+	}
 	bps, ok := number(p, "bps")
 	if !ok || bps <= 0 { // no estimate is not an estimate of zero
 		return
 	}
 	mbps, _ := clamped(bps/1e6, maxBandwidthMbps)
-	client, _ := p["client"].(string)
-	BandwidthMbps.WithLabelValues(deviceClass(client, userAgent)).Observe(mbps)
+	BandwidthMbps.WithLabelValues(device).Observe(mbps)
 }
 
 func modeLabel(p map[string]any) string {

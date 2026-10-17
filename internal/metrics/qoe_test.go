@@ -20,6 +20,7 @@ func resetQoE() {
 	Rebuffers.Reset()
 	RebufferSeconds.Reset()
 	BandwidthMbps.Reset()
+	SegmentTTFBSeconds.Reset()
 }
 
 // series is what one series holds: a counter's value, a histogram's count
@@ -184,6 +185,26 @@ func TestBandwidthIsObservedByDeviceClass(t *testing.T) {
 	wantHistogram(t, BandwidthMbps, map[string]string{"device": "tv"}, 2, 15)
 }
 
+// The wait for the last segment's first byte, which the estimate leaves out:
+// observed whenever the event has it, with an estimate or without.
+func TestSegmentTTFBIsObservedByDeviceClass(t *testing.T) {
+	resetQoE()
+	OnPlayerEvent("bandwidth", map[string]any{"bps": 4.6e8, "frag_ttfb_ms": 10.0}, desktopUA)
+	OnPlayerEvent("bandwidth", map[string]any{"bps": 8.4e7, "frag_ttfb_ms": 2008.0}, desktopUA)
+	OnPlayerEvent("bandwidth", map[string]any{"frag_ttfb_ms": "255", "client": "chino-mobile-ios"}, "")
+	// None, or none that is one: not observed; one beyond reason at the cap.
+	for _, bad := range []any{nil, -1.0, "slow"} {
+		OnPlayerEvent("bandwidth", map[string]any{"bps": 1e7, "frag_ttfb_ms": bad}, desktopUA)
+	}
+	OnPlayerEvent("bandwidth", map[string]any{"bps": 1e7, "frag_ttfb_ms": 9e9}, tizenUA)
+
+	wantHistogram(t, SegmentTTFBSeconds, map[string]string{"device": "desktop"}, 2, 2.018)
+	wantHistogram(t, SegmentTTFBSeconds, map[string]string{"device": "mobile"}, 1, 0.255)
+	wantHistogram(t, SegmentTTFBSeconds, map[string]string{"device": "tv"}, 1, maxTTFBSeconds)
+	// The estimate is still observed beside it, without the TTFB too.
+	wantHistogram(t, BandwidthMbps, map[string]string{"device": "desktop"}, 5, 460+84+30)
+}
+
 func TestDeviceClass(t *testing.T) {
 	for _, c := range []struct{ client, ua, want string }{
 		{"chino-androidtv", "okhttp/4.12.0", "tv"},
@@ -240,7 +261,7 @@ func TestEveryKindIsStillCountedAndTheOldCountersUnchanged(t *testing.T) {
 		}
 	}
 	// Nothing but first_frame reached the playback-quality metrics.
-	if n := seriesIn(t, StartupTimeouts) + seriesIn(t, Rebuffers) + seriesIn(t, RebufferSeconds) + seriesIn(t, BandwidthMbps); n != 0 {
+	if n := seriesIn(t, StartupTimeouts) + seriesIn(t, Rebuffers) + seriesIn(t, RebufferSeconds) + seriesIn(t, BandwidthMbps) + seriesIn(t, SegmentTTFBSeconds); n != 0 {
 		t.Errorf("%d series from kinds that feed none", n)
 	}
 	wantHistogram(t, StartupSeconds, map[string]string{"mode": "packaged", "resume": "false"}, 1, 0.8)

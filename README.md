@@ -178,7 +178,7 @@ are judged against:
 | `first_frame` | `startup_ms` (the player opening, or Try again, to its first frame), `mode`, `resume`; with `hidden` or `click_to_play` true it is logged, not observed | `chino_player_startup_seconds{mode,resume}`, buckets 0.25, 0.5, 1, 2, 3, 5, 8, 12, 20, 30 s |
 | `startup_timeout` | `mode`, `phase`: what the player still waited for when it gave up | `chino_player_startup_timeouts_total{mode,phase}` |
 | `rebuffer` | `mode`, `duration_ms`: a stall that began mid-play | `chino_player_rebuffers_total{mode}`, each one; `chino_player_rebuffer_seconds{mode}`, buckets 0.1, 0.25, 0.5, 1, 2, 4, 8, 15, 30, 60 s |
-| `bandwidth` | `bps`, the player's estimate while it plays | `chino_player_bandwidth_mbps{device}`, buckets 1, 2, 4, 8, 15, 25, 40, 80 Mbit/s |
+| `bandwidth` | `bps`, the player's estimate while it plays, which leaves out the wait for a segment's first byte; `frag_ttfb_ms`, that wait for the last video segment (the round trip and the origin's time to answer) | `chino_player_bandwidth_mbps{device}`, buckets 1, 2, 4, 8, 15, 25, 40, 80 Mbit/s; `chino_player_segment_ttfb_seconds{device}`, buckets 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8 s |
 | `level_switch` | nothing: the rendition on screen changed | `chino_player_events_total` only |
 
 - Labels come from fixed sets, never a user, an item or an address. `mode` is
@@ -191,7 +191,7 @@ are judged against:
   is `desktop`.
 - Values are checked: a negative one, or one that is no number, is not
   observed (the rebuffer is still counted); one beyond reason is observed at
-  a cap: 600 s for a start, 3600 s for a stall, 10 Gbit/s.
+  a cap: 600 s for a start or a first byte, 3600 s for a stall, 10 Gbit/s.
 - Besides: `chino_player_media_errors_total{code}` (`media_error`),
   `chino_player_quality_switches_total{from,to}` (`quality_switch`),
   `chino_player_resume_outcomes_total{outcome}` (`resume_accept`,
