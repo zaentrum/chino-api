@@ -158,6 +158,49 @@ decodes and the subtitle group the package has; `q=<name>` from `/play/info`'s
 `PlayQuality`). A quality menu shows `qualities` when it has two or more
 entries, by `label`, and reloads the master with `q=<name>`.
 
+### Playback telemetry
+
+`POST /api/v1/play/events` takes the players' events in batches,
+`{"sessionId": "…", "events": [{"ts": <ms>, "kind": "…", "itemId": "…", "payload": {…}}]}`,
+and keeps none of them: each is a JSON line in the log (`client_ts`, `kind`,
+`itemId`, each payload field as `p_<field>`, credentials `REDACTED`) and is
+counted on `GET /metrics`, the cluster-internal scrape. Every kind counts in
+`chino_player_events_total{kind}`, a kind the server does not know too. A
+payload value is a JSON number or its string, as the TV and mobile apps send
+every value.
+
+Five kinds measure how playback goes, the baseline the live rungs of
+[ADR-0013](https://github.com/zaentrum/zaentrum/blob/main/docs/adr/0013-live-rungs-safety-net.md)
+are judged against:
+
+| Kind | What the server reads | Metric |
+|---|---|---|
+| `first_frame` | `startup_ms` (the player opening, or Try again, to its first frame), `mode`, `resume`; with `hidden` or `click_to_play` true it is logged, not observed | `chino_player_startup_seconds{mode,resume}`, buckets 0.25, 0.5, 1, 2, 3, 5, 8, 12, 20, 30 s |
+| `startup_timeout` | `mode`, `phase`: what the player still waited for when it gave up | `chino_player_startup_timeouts_total{mode,phase}` |
+| `rebuffer` | `mode`, `duration_ms`: a stall that began mid-play | `chino_player_rebuffers_total{mode}`, each one; `chino_player_rebuffer_seconds{mode}`, buckets 0.1, 0.25, 0.5, 1, 2, 4, 8, 15, 30, 60 s |
+| `bandwidth` | `bps`, the player's estimate while it plays | `chino_player_bandwidth_mbps{device}`, buckets 1, 2, 4, 8, 15, 25, 40, 80 Mbit/s |
+| `level_switch` | nothing: the rendition on screen changed | `chino_player_events_total` only |
+
+- Labels come from fixed sets, never a user, an item or an address. `mode` is
+  `packaged`, `passthrough`, `remux` or `transcode`; `resume` `true` or
+  `false`; `phase` `request` (the stream not asked for yet), `playlist`,
+  `init`, `first_segment` or `decode` (the segments in, no frame); anything
+  else, or nothing, is `unknown`. `device` is `tv`, `mobile` or `desktop`: by
+  the `client` the event names (the TV and mobile apps send one), else by the
+  request's `User-Agent`; what is not recognised as a TV, a phone or a tablet
+  is `desktop`.
+- Values are checked: a negative one, or one that is no number, is not
+  observed (the rebuffer is still counted); one beyond reason is observed at
+  a cap: 600 s for a start, 3600 s for a stall, 10 Gbit/s.
+- Besides: `chino_player_media_errors_total{code}` (`media_error`),
+  `chino_player_quality_switches_total{from,to}` (`quality_switch`),
+  `chino_player_resume_outcomes_total{outcome}` (`resume_accept`,
+  `resume_decline`), `chino_player_stall_recoveries_total` (`stall_recover`),
+  `chino_player_progress_saves_total`, and `chino_api_http_requests_total` and
+  `chino_api_http_request_duration_seconds` by route and status.
+
+What chino-web sends, and how often, is in its README.
+
 ### Extras
 
 A movie's or a series' extras - its trailers, teasers, featurettes and other
