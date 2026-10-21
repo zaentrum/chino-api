@@ -115,6 +115,62 @@ paths:
           description: No such item, or one the viewer's rating cap does not allow
         "502":
           description: The catalog failed
+  /v1/search:
+    get:
+      summary: Search the catalog
+      description: >
+        One search of the catalog (katalog-api's): its titles, films, series
+        and episodes, ranked together by how they match the query, best first,
+        and the people whose names match it, ranked apart. A title and a name
+        are read without case, accents or punctuation ("widows bay" finds
+        "Widow's Bay", "leon" "Léon"), while typing ("wido"), with typos
+        ("nevrland"); a plot only when no title matches. Each title says how it
+        matched (match), with its poster and the viewer's watched_at as the
+        lists send them; an episode names its series (with its poster, and
+        whether the series matched by its own title too, so a client can show
+        the two as one). A client that does not show episodes yet leaves
+        episode out of types. A capped viewer is served what the cap allows.
+        Against a katalog-api without the search, each type's list of the
+        query comes one after the other, and the people as /v1/people finds
+        them, without a match.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+          description: The query; a blank one finds nothing.
+        - in: query
+          name: types
+          schema: { type: string, default: "movie,series,episode" }
+          description: The types of title, comma separated; the parameter may repeat.
+          example: movie,series
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 30 }
+          description: How many titles.
+        - in: query
+          name: people
+          schema: { type: integer, minimum: 0, maximum: 50, default: 12 }
+          description: How many people; 0 looks for none.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, people]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Item" }
+                  people:
+                    type: array
+                    items: { $ref: "#/components/schemas/Person" }
+                  product: { type: string, example: chino }
+                  source: { type: string, example: katalog }
+        "502":
+          description: The catalog failed
   /v1/people:
     get:
       summary: Search people by name
@@ -1215,6 +1271,24 @@ components:
           description: on a person's filmography only, the person's roles on the item
           type: array
           items: { type: string }
+        match:
+          type: string
+          enum: [exact, prefix, words, alternative, similar, plot]
+          description: >
+            On a search's titles only: how the title matched the query, its
+            tier, best first: it is the query, begins with it, holds every word
+            of it, a series' other name does, it is close to it (a typo), its
+            plot holds it (only when no title matched). An episode ranks after
+            every film and series.
+        series:
+          type: object
+          description: On an episode a search found, its series.
+          required: [id, title, matched]
+          properties:
+            id: { type: string }
+            title: { type: string }
+            matched: { type: boolean, description: "the series matched the query by its own title too" }
+            poster_url: { type: string }
         watched_at: { type: string, format: date-time }
     Trailer:
       type: object
@@ -1282,6 +1356,12 @@ components:
         profile_url:
           type: string
           description: set when has_profile; /api/v1/people/{id}/profile
+        match:
+          type: string
+          enum: [exact, prefix, words, alternative, similar]
+          description: >
+            On /v1/search only: how the name matched the query (alternative:
+            another name the person is known by).
     PersonDetail:
       allOf:
         - $ref: "#/components/schemas/Person"

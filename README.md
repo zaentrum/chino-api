@@ -30,6 +30,7 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `DELETE /api/v1/me` | bearer JWT (in the header) | deletes the signed-in person's data and their account ([below](#deleting-an-account)) |
 | `GET /api/v1/items` | bearer JWT | catalog browse |
 | `GET /api/v1/items/{id}` | bearer JWT | item detail, cast and crew by role, its trailers and extras |
+| `GET /api/v1/search` | bearer JWT | one search: films, series and episodes ranked together, and people apart ([below](#search)) |
 | `GET /api/v1/people` | bearer JWT | people search by name |
 | `GET /api/v1/people/{id}` | bearer JWT | a person, their details and filmography |
 | `GET /api/v1/people/{id}/profile` | bearer JWT or stream token | a person's portrait (`profile_url`) |
@@ -50,6 +51,24 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `GET /api/v1/items/{id}/play/{vN\|aN\|sN}/playlist.m3u8` | bearer JWT or stream token | packaged video / audio / WebVTT rendition, its segments next to it |
 | `GET /api/v1/items/{id}/extras/{extraId}/play/master.m3u8` | bearer JWT or stream token | an extra's HLS master, its `play_path` ([below](#extras)) |
 | `GET /api/v1/items/{id}/extras/{extraId}/play/{vN\|aN\|sN}/playlist.m3u8` | bearer JWT or stream token | an extra's renditions, as a packaged title's |
+
+### Search
+
+`GET /api/v1/search?q=` is katalog-api's search for the viewer: the titles
+(films, series and episodes) ranked together by how they match the query,
+best first, and the people whose names match it, ranked apart, in one
+response: `{"items": [...], "people": [...]}`. `types=` names the types of
+title (`movie,series,episode` by default; a client that shows no episode
+results asks for `movie,series`), `limit=` how many titles (30, at most 100),
+`people=` how many people (12, at most 50; 0 none). Each title comes as the
+lists send it, poster URLs and `watched_at` included, with `match`: how it
+matched (`exact`, `prefix`, `words`, `alternative`, `similar`, `plot`; the
+plot only when no title matched). An episode names its `series` (`id`,
+`title`, `poster_url`, and `matched`: the series matched by its own title
+too), so that a client can show the two as one card. A person comes as
+`/api/v1/people` sends them, with `match`. Against a katalog-api without the
+search, the types' lists of the query come one after the other, and the
+people as `/api/v1/people` finds them.
 
 ### Parental controls
 
