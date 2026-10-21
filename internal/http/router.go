@@ -101,6 +101,10 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// kill the in-flight ffmpeg transcode by rotating the URL.
 			r.Post("/me/stream-token", postStreamToken(signer))
 			r.Get("/items", listItems(st, kc))
+			// One search of the catalog: films, series and episodes ranked
+			// together by how they match the query, and the people apart
+			// (search.go).
+			r.Get("/search", search(st, kc))
 			r.With(title).Get("/items/{id}", itemDetail(st, kc))
 			// Watched, and the progress below, are a file's: a write for an
 			// episode of a file that holds several goes to each (files.go).
