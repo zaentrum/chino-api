@@ -42,29 +42,53 @@ func (s *Store) Close() {
 	}
 }
 
-// GetProgress returns the last saved playback position (seconds) for
-// (user, item). 0 means "never watched". A nil Store always returns 0 —
-// callers don't need to special-case the no-DB development path.
+// GetProgress returns the resume point (seconds) for (user, item): the
+// last saved playback position, or 0 - "never watched", or finished (in its
+// last 5 % or 2 minutes, Finished), where Play starts it over. A nil Store
+// always returns 0 — callers don't need to special-case the no-DB
+// development path.
 func (s *Store) GetProgress(ctx context.Context, userID, itemID string) (int, error) {
+	r, err := s.GetResume(ctx, userID, itemID)
+	return r.PositionSec, err
+}
+
+// Resume is the resume point of (user, item): the position and the length
+// it was saved against, both 0 where there is none; Finished where the
+// saved position is in the title's finished end, which has none.
+type Resume struct {
+	PositionSec int
+	DurationSec int
+	Finished    bool
+}
+
+// GetResume is GetProgress with the length the position was saved against,
+// and whether the title is finished.
+func (s *Store) GetResume(ctx context.Context, userID, itemID string) (Resume, error) {
 	if s == nil || s.p == nil || userID == "" || itemID == "" {
-		return 0, nil
+		return Resume{}, nil
 	}
-	var pos int
+	var pos, dur int
 	err := s.p.QueryRow(ctx,
-		`SELECT position_sec FROM playback_progress
-		 WHERE user_id = $1 AND item_id = $2`, userID, itemID).Scan(&pos)
+		`SELECT position_sec, duration_sec FROM playback_progress
+		 WHERE user_id = $1 AND item_id = $2`, userID, itemID).Scan(&pos, &dur)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, nil
+		return Resume{}, nil
 	}
-	return pos, err
+	if err != nil {
+		return Resume{}, err
+	}
+	if Finished(pos, dur) {
+		return Resume{Finished: true}, nil
+	}
+	return Resume{PositionSec: pos, DurationSec: dur}, nil
 }
 
 // ProgressRow is one row from the playback_progress table.
-// Finished is true when the saved position is within 60 s of the saved
-// duration (and duration is known). The handler uses this flag to
-// decide whether to surface the row as-is (in-progress) or substitute
-// the parent series' next episode (finished episode) / drop it
-// (finished movie).
+// Finished is true when the saved position is in the title's finished end
+// (its last 5 % or 2 minutes, Finished; the length known) or the title is
+// marked watched. The handler uses this flag to decide whether to surface
+// the row as-is (in-progress) or substitute the parent series' next episode
+// (finished episode) / drop it (finished movie).
 type ProgressRow struct {
 	ItemID      string
 	PositionSec int
@@ -86,8 +110,9 @@ func (s *Store) ListContinueWatching(ctx context.Context, userID string, limit i
 	// "Finished" means the row should drive Next-Up substitution rather
 	// than appearing as a half-watched card. Two routes produce that
 	// state:
-	//   1. The player auto-marks at ≥95 % of duration → position lands
-	//      within 60 s of the saved duration.
+	//   1. The position is in the title's finished end (Finished: its
+	//      last 5 % or 2 minutes), where postProgress marks it watched too
+	//      - but for a title taken off Continue Watching (dismiss).
 	//   2. The user clicks the watched toggle (chino-web DetailPage /
 	//      EpisodesList) at an arbitrary position → a watched_history
 	//      row exists, but position may be well short of the end (e.g.
@@ -100,7 +125,7 @@ func (s *Store) ListContinueWatching(ctx context.Context, userID string, limit i
 	rows, err := s.p.Query(ctx,
 		`SELECT p.item_id, p.position_sec, p.duration_sec,
 		        (
-		          (p.duration_sec > 0 AND p.position_sec >= p.duration_sec - 60)
+		          `+finishedSQL+`
 		          OR EXISTS (
 		            SELECT 1 FROM watched_history w
 		            WHERE w.user_id = p.user_id AND w.item_id = p.item_id
@@ -108,10 +133,10 @@ func (s *Store) ListContinueWatching(ctx context.Context, userID string, limit i
 		        ) AS finished
 		 FROM playback_progress p
 		 WHERE p.user_id = $1
-		   AND p.position_sec > 30
+		   AND p.position_sec > $3
 		 ORDER BY p.updated_at DESC
 		 LIMIT $2`,
-		userID, limit)
+		userID, limit, MinResumeSec)
 	if err != nil {
 		return nil, err
 	}

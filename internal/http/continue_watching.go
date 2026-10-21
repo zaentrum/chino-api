@@ -34,12 +34,14 @@ type continueWatchingItem struct {
 // HTTP client in parallel — capped via a small worker pool so we don't
 // fan out unbounded.
 //
-// Handling of finished rows (position within 60 s of duration):
+// Handling of finished rows (store.Finished: the position in the title's
+// last 5 % or 2 minutes; or marked watched):
 //   - Movie: dropped (user already finished it; no continuation).
-//   - Episode: replaced with the next episode in the parent series. The
-//     substituted card has position 0, no progress bar (UpNext=true),
-//     and clicking plays from the start. If the just-finished episode
-//     was the last of the series, the row is dropped.
+//   - Episode: replaced with the next episode in the parent series, with
+//     that one's own resume point where it has one (a card like any in
+//     progress), else position 0 and no progress bar (UpNext=true):
+//     clicking plays it from the start. If the just-finished episode was
+//     the last of the series, the row is dropped.
 //
 // The episodes of one file that holds several (a double-length finale
 // listed as two) have a row each, the same position, and are one card: an
@@ -204,6 +206,11 @@ func buildCWEntry(r *http.Request, kc *katalog.Client, st *store.Store, userID, 
 		PositionSec: 0,
 		DurationSec: 0,
 		UpNext:      true,
+	}
+	// The next episode's own resume point takes over where it has one, by
+	// the same rule (GetResume): the viewer was in the middle of it.
+	if res, err := st.GetResume(r.Context(), userID, next.ID); err == nil && res.PositionSec > store.MinResumeSec {
+		entry.PositionSec, entry.DurationSec, entry.UpNext = res.PositionSec, res.DurationSec, false
 	}
 	if parent, perr := kc.GetItem(r.Context(), bearer, item.ParentID); perr == nil && parent != nil {
 		entry.SeriesTitle = parent.Title

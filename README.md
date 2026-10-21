@@ -36,7 +36,7 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `GET /api/v1/people/{id}/profile` | bearer JWT or stream token | a person's portrait (`profile_url`) |
 | `GET /api/v1/me/continue-watching` | bearer JWT | resume list |
 | `GET /api/v1/me/watchlists` | bearer JWT | named watchlists |
-| `GET/POST /api/v1/items/{id}/progress` | bearer JWT | playback progress, a file's ([below](#one-file-several-episodes)) |
+| `GET/POST /api/v1/items/{id}/progress` | bearer JWT | playback progress, a file's ([below](#one-file-several-episodes)); the resume point, none for a finished title ([below](#finished-titles)) |
 | `POST /api/v1/play/events` | bearer JWT or stream token | playback telemetry (the stream token for `sendBeacon`) |
 | `GET /api/v1/events` | bearer JWT or stream token | live catalog notifications (SSE) |
 | `GET /api/v1/notices` | bearer JWT | what addons told the signed-in person, from portal-api — best effort ([below](#notices)) |
@@ -308,6 +308,25 @@ list carry it under the catalog's names:
   carries `file_duration_ms`: how long its file is, as chino-stream measured
   it from the package. A client shows the file as one entry of that length
   around the episodes it holds; `duration_ms` stays each episode's own.
+
+### Finished titles
+
+A title whose saved position is in its last 5 %, or its last 2 minutes
+where that is longer, is finished - never by more than its second half, so
+a short is not finished at its first second, and never where its length is
+not known. One rule (`store.Finished`) decides it wherever a resume point or
+the watched state is served:
+
+- `POST /api/v1/items/{id}/progress` of a finished position marks the title
+  watched, as the players' own `POST /api/v1/me/items/{id}/watched` does,
+  whichever client played it - but with `"dismiss": true`: a client taking
+  a title off Continue Watching saves it at its end, unwatched.
+- `GET /api/v1/items/{id}/progress` has no resume point for it:
+  `position_sec` is 0, with `"finished": true`, and the clients show Play
+  from the start and the watched mark - no Resume, no Start over.
+- `GET /api/v1/me/continue-watching` drops a finished film, and puts the
+  next episode in a finished one's place: with that one's own resume point
+  where it has one, a card like any other in progress; else at 0, `up_next`.
 
 ## Local development
 
