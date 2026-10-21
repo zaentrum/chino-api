@@ -21,6 +21,9 @@ type Person struct {
 	// ProfileURL is synthesised on the way out, as an item's poster_url is:
 	// chino-api's portrait proxy, set only when there is a portrait.
 	ProfileURL string `json:"profile_url,omitempty"`
+	// Match is set on a search's people only (Search): how the name matched
+	// the query, as katalog-api sends it.
+	Match string `json:"match,omitempty"`
 }
 
 // withProfileURL sets ProfileURL to the portrait proxy when the person has a

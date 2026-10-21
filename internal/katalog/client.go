@@ -136,6 +136,13 @@ type Item struct {
 	// Roles is set on a person's filmography only: the person's roles on
 	// this item, in katalog-api's credit order.
 	Roles []string `json:"roles,omitempty"`
+
+	// Match and Series are set on a search's titles only (Search): how the
+	// title matched the query (exact, prefix, words, alternative, similar,
+	// plot), and an episode's series, as katalog-api sends them, with the
+	// series' poster.
+	Match  string        `json:"match,omitempty"`
+	Series *SearchSeries `json:"series,omitempty"`
 }
 
 // CastEntry is one credit, as katalog-api sends it. Role is an open
