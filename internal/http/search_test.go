@@ -61,7 +61,8 @@ func TestSearchComesThroughTheRouter(t *testing.T) {
 }
 
 // A katalog-api without the search is searched as the clients searched
-// before: each type's list of the query, one after the other, and /people.
+// before: each type's list of the query, one after the other, each of up to
+// the limit, and /people.
 func TestSearchOfAKatalogAPIWithoutIt(t *testing.T) {
 	kat := newFake(t, map[string]string{
 		"/api/v1/movies": `{"items":[{"id":"m1","type":"movie","title":"Black Widow"}],"total":1}`,
@@ -69,7 +70,7 @@ func TestSearchOfAKatalogAPIWithoutIt(t *testing.T) {
 		"/api/v1/people": `{"people":[{"id":"p1","name":"Ada Widow","credits":1,"has_profile":false}],"total":1}`,
 	})
 	h := router(t, kat.URL, "http://katalog-manager.invalid", false)
-	w := do(h, "GET", "/api/v1/search?q=widow&types=movie,series", nil)
+	w := do(h, "GET", "/api/v1/search?q=widow&types=movie,series&limit=1", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("search: %d %s", w.Code, w.Body)
 	}

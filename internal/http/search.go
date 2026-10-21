@@ -83,8 +83,9 @@ func search(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 
 // searchAsBefore is a search of a katalog-api that has none: the list of the
 // query of each type asked for (films, series and episodes when none is),
-// each ranked by katalog-api, one type after the other, up to the limit; and
-// the people by /people, best effort, as the clients asked for them.
+// each ranked by katalog-api and of up to the limit, one type after the
+// other, as the clients asked for them; and the people by /people, best
+// effort.
 func searchAsBefore(ctx context.Context, kc *katalog.Client, bearer string, opts katalog.SearchOpts) (katalog.SearchResult, error) {
 	types := opts.Types
 	if len(types) == 0 {
@@ -111,7 +112,6 @@ func searchAsBefore(ctx context.Context, kc *katalog.Client, bearer string, opts
 		}
 		out.Items = append(out.Items, items...)
 	}
-	out.Items = out.Items[:min(len(out.Items), opts.Limit)]
 	if opts.People > 0 {
 		if people, err := kc.SearchPeople(ctx, bearer, opts.Query, opts.People); err == nil {
 			out.People = people

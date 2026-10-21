@@ -67,8 +67,8 @@ plot only when no title matched). An episode names its `series` (`id`,
 `title`, `poster_url`, and `matched`: the series matched by its own title
 too), so that a client can show the two as one card. A person comes as
 `/api/v1/people` sends them, with `match`. Against a katalog-api without the
-search, the types' lists of the query come one after the other, and the
-people as `/api/v1/people` finds them.
+search, the types' lists of the query come one after the other, each of up
+to `limit` titles, and the people as `/api/v1/people` finds them.
 
 ### Parental controls
 

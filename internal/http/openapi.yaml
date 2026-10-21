@@ -131,8 +131,8 @@ paths:
         the two as one). A client that does not show episodes yet leaves
         episode out of types. A capped viewer is served what the cap allows.
         Against a katalog-api without the search, each type's list of the
-        query comes one after the other, and the people as /v1/people finds
-        them, without a match.
+        query comes one after the other, each of up to limit titles, and the
+        people as /v1/people finds them, without a match.
       security: [{ bearerAuth: [] }]
       parameters:
         - in: query
