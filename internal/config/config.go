@@ -42,7 +42,9 @@ type Config struct {
 	// catalog's writer. The admin packaging routes forward to it with the
 	// admin's bearer, which it checks itself: POST /api/v1/admin/items/{id}/
 	// package as POST /api/items/{id}/package, the GET as GET
-	// /api/analyze/items/{id}/steps. KATALOG_MANAGER_URL; when it is unset,
+	// /api/analyze/items/{id}/steps. GET /api/v1/subtitles/languages asks its
+	// GET /api/library/subtitles/languages with the viewer's bearer, and keeps
+	// the answer for every viewer. KATALOG_MANAGER_URL; when it is unset,
 	// ANALYZER_BASE_URL, its former name, which deployments point at
 	// katalog-manager; else http://katalog-manager-api, the service's name
 	// in the namespace.

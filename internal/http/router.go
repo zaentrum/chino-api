@@ -126,6 +126,10 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			r.With(title).Get("/series/{id}/next-episode", nextEpisode(kc, st))
 			r.Get("/genres", listGenres(kc))
 			r.With(title).Get("/items/{id}/subtitles", subtitlesList(kc))
+			// The instance's subtitle languages, asked of katalog-manager
+			// with the viewer's bearer and kept for every viewer
+			// (subtitle_languages.go).
+			r.Get("/subtitles/languages", newSubtitleLanguages(cfg.KatalogManagerURL).ServeHTTP)
 
 			// Addon UI-extension slots: the SPA asks for the contributions
 			// for a named slot (e.g. search.empty) and renders them natively.

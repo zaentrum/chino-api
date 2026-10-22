@@ -578,6 +578,41 @@ paths:
       responses:
         "204":
           description: Removed (or already absent)
+  /v1/subtitles/languages:
+    get:
+      summary: The instance's subtitle languages
+      description: >-
+        The languages every title of the instance is to have a subtitle in,
+        as katalog-manager's settings name them: BCP 47 tags as
+        katalog-manager gives them, in the setting's order, and nothing else.
+        They are the instance's, not the viewer's: chino-api asks
+        katalog-manager (GET /api/library/subtitles/languages) with the
+        viewer's bearer and keeps the answer for every viewer for 5 minutes,
+        then asks again; when katalog-manager does not answer then, the last
+        answer is served while it is less than an hour old. A stream token is
+        not taken.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The languages, in the setting's order; empty when none is set
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [languages]
+                properties:
+                  languages:
+                    type: array
+                    items: { type: string, description: A BCP 47 language tag }
+                    example: [en, de, zh-Hans]
+        "401":
+          description: No bearer, or one that is not valid (a stream token is not taken)
+        "502":
+          description: >-
+            katalog-manager did not answer (an error, no answer within 5 s, a
+            status other than 2xx, a body that is not its answer) and there is
+            no answer of the last hour to serve. A line of text and no list;
+            it says nothing of the setting.
   /v1/items/{id}/play/info:
     get:
       summary: How the item plays for this client, and the qualities it may pick

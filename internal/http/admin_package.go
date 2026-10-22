@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/url"
@@ -93,15 +94,10 @@ func proxyToKatalogManager(w http.ResponseWriter, r *http.Request, base, method,
 		http.Error(w, "katalog-manager is not configured (KATALOG_MANAGER_URL)", http.StatusServiceUnavailable)
 		return
 	}
-	req, err := http.NewRequestWithContext(r.Context(), method, strings.TrimRight(base, "/")+path, http.NoBody)
+	req, err := katalogManagerRequest(r.Context(), r, base, method, path)
 	if err != nil {
 		http.Error(w, "bad katalog-manager url", http.StatusInternalServerError)
 		return
-	}
-	// The bearer the middleware verified: the header, or the deprecated
-	// ?token= it moved into the header.
-	if bearer := r.Header.Get("Authorization"); strings.HasPrefix(bearer, "Bearer ") {
-		req.Header.Set("Authorization", bearer)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -116,4 +112,18 @@ func proxyToKatalogManager(w http.ResponseWriter, r *http.Request, base, method,
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+// katalogManagerRequest is a request to katalog-manager at base, under ctx,
+// with the caller's bearer: the one the middleware verified r by, from the
+// header or the deprecated ?token= it moved into the header.
+func katalogManagerRequest(ctx context.Context, r *http.Request, base, method, path string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(base, "/")+path, http.NoBody)
+	if err != nil {
+		return nil, err
+	}
+	if bearer := r.Header.Get("Authorization"); strings.HasPrefix(bearer, "Bearer ") {
+		req.Header.Set("Authorization", bearer)
+	}
+	return req, nil
 }

@@ -38,6 +38,7 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `POST /api/v1/me/available` | bearer JWT | which of the titles a client keeps the viewer may watch now, in one request ([below](#downloads)) |
 | `GET /api/v1/me/watchlists` | bearer JWT | named watchlists |
 | `GET/POST /api/v1/items/{id}/progress` | bearer JWT | playback progress, a file's ([below](#one-file-several-episodes)); the resume point, none for a finished title ([below](#finished-titles)); a late position never over a newer one ([below](#downloads)) |
+| `GET /api/v1/subtitles/languages` | bearer JWT | the instance's subtitle languages, from katalog-manager, kept 5 minutes ([below](#subtitle-languages)) |
 | `POST /api/v1/play/events` | bearer JWT or stream token | playback telemetry (the stream token for `sendBeacon`) |
 | `GET /api/v1/events` | bearer JWT or stream token | live catalog notifications (SSE) |
 | `GET /api/v1/notices` | bearer JWT | what addons told the signed-in person, from portal-api — best effort ([below](#notices)) |
@@ -185,6 +186,26 @@ and they answer a preflight (GET, the `Range` header) without a credential.
 Their credential is in the URL, never a cookie, so this lets no other site use
 a viewer's session. The routes that take a bearer in a header send no CORS
 headers, and chino-api passes no upstream's `Access-Control-*` headers on.
+
+### Subtitle languages
+
+`GET /api/v1/subtitles/languages` answers the instance's subtitle languages,
+the languages every title is to have a subtitle in as katalog-manager's
+settings name them: `{"languages": ["en", "de", "zh-Hans"]}`, BCP 47 tags as
+katalog-manager gives them, in the setting's order, and `[]` when none is set.
+Nothing else is in the answer.
+
+- They are the instance's, not the viewer's: chino-api asks katalog-manager's
+  `GET /api/library/subtitles/languages` with the viewer's bearer and keeps
+  the answer for every viewer for 5 minutes, so an admin's change of the
+  setting reaches the clients within them.
+- After the 5 minutes each request asks again. When katalog-manager does not
+  answer then (an error, no answer within 5 seconds, a status other than
+  2xx, a body that is not its answer), the last answer is served while it is
+  less than an hour old. A failure is never kept, and does not make the last
+  answer younger.
+- With no answer of the last hour the answer is `502`, a line of text and no
+  list. `[]` says none is set; a `502` says nothing of the setting.
 
 ### Playback telemetry
 
@@ -407,7 +428,7 @@ Configured entirely through environment variables (see `internal/config`):
 | `KATALOG_BASE_URL` | catalog metadata service |
 | `STREAM_BASE_URL` | chino-stream (HLS / trickplay / play info) |
 | `ARTWORK_BASE_URL` | katalog-manager, for artwork |
-| `KATALOG_MANAGER_URL` | katalog-manager, where the admin packaging routes go with the admin's bearer (default `http://katalog-manager-api`; `ANALYZER_BASE_URL`, its former name, is read when it is unset) |
+| `KATALOG_MANAGER_URL` | katalog-manager, where the admin packaging routes go with the admin's bearer and the subtitle languages are asked for with the viewer's (default `http://katalog-manager-api`; `ANALYZER_BASE_URL`, its former name, is read when it is unset) |
 | `PG_URL` | Postgres URL for user-state (optional) |
 | `ADMIN_ROLE` | the realm role (`realm_access.roles` of the access token) that opens `/api/v1/admin/*` (default `zaentrum-admin`, as katalog-manager and the portal) |
 | `ADMIN_SUBJECTS` | deprecated: comma-separated OIDC `sub` values let through `/api/v1/admin/*` besides the role; empty by default, and it goes in a coming release |
