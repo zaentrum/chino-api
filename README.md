@@ -35,6 +35,7 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `GET /api/v1/people/{id}` | bearer JWT | a person, their details and filmography |
 | `GET /api/v1/people/{id}/profile` | bearer JWT or stream token | a person's portrait (`profile_url`) |
 | `GET /api/v1/me/continue-watching` | bearer JWT | resume list |
+| `POST /api/v1/me/available` | bearer JWT | which of the titles a client keeps the viewer may watch now, in one request ([below](#downloads)) |
 | `GET /api/v1/me/watchlists` | bearer JWT | named watchlists |
 | `GET/POST /api/v1/items/{id}/progress` | bearer JWT | playback progress, a file's ([below](#one-file-several-episodes)); the resume point, none for a finished title ([below](#finished-titles)) |
 | `POST /api/v1/play/events` | bearer JWT or stream token | playback telemetry (the stream token for `sendBeacon`) |
@@ -335,6 +336,24 @@ the watched state is served:
 - `GET /api/v1/me/continue-watching` drops a finished film, and puts the
   next episode in a finished one's place: with that one's own resume point
   where it has one, a card like any other in progress; else at 0, `up_next`.
+
+### Downloads
+
+A phone keeps downloads (packaged titles fetched from the playback routes) and
+plays them without a connection; `GET /api/config`'s `features.downloads`
+says whether it may offer them.
+
+- `POST /api/v1/me/available` with `{"ids": [...]}` (at most 500) answers
+  `{"ids": [...]}`: the ids asked about that the caller may watch now, in
+  their order, each once. A capped viewer is held to its cap as on every
+  route of one title - a title above it, an unrated one the catalog's
+  setting hides and an id of no title are left out; for a viewer without a
+  cap the catalog decides, a title it holds. The phone asks it as the app
+  starts and comes to the front, and before a download plays, and deletes
+  the downloads the answer leaves out: the library decides, for every
+  account, and a parent lowering a child's cap takes what is above it off
+  the child's phone. When the catalog cannot say, the answer is 502 and no
+  ids, and the phone deletes nothing.
 
 ## Local development
 

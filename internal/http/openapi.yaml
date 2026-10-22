@@ -89,6 +89,47 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AccountRefusal" }
+  /v1/me/available:
+    post:
+      summary: Which of the titles a client keeps the viewer may watch now
+      description: >-
+        One request for a phone's downloads: it asks as the app starts and
+        comes to the front, and before a download plays, and deletes the
+        downloads the answer leaves out. A capped viewer is held to its cap
+        as on every route of one title (a title above it, an unrated one the
+        catalog's setting hides and an id of no title are left out); for a
+        viewer without a cap the catalog decides - a title it holds. When the
+        catalog cannot say, the answer is 502 and no ids.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids:
+                  type: array
+                  maxItems: 500
+                  items: { type: string }
+      responses:
+        "200":
+          description: The ids asked about that the viewer may watch, in their order, each once
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ids:
+                    type: array
+                    items: { type: string }
+        "400":
+          description: No body, no JSON, or more than 500 ids
+        "401":
+          description: No bearer, or one that is not valid
+        "502":
+          description: The catalog could not say; nothing is answered
   /v1/items:
     get:
       summary: List items for this product (stub during beta)

@@ -100,6 +100,10 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// uses on <video src> URLs so OIDC silent-renew can't
 			// kill the in-flight ffmpeg transcode by rotating the URL.
 			r.Post("/me/stream-token", postStreamToken(signer))
+			// Which of the titles a client keeps the viewer may watch now,
+			// in one request: the phone deletes the downloads of the others
+			// (available.go).
+			r.Post("/me/available", postAvailable(g, kc))
 			r.Get("/items", listItems(st, kc))
 			// One search of the catalog: films, series and episodes ranked
 			// together by how they match the query, and the people apart
