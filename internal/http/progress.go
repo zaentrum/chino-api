@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -21,6 +22,13 @@ type progressBody struct {
 	// so the feed drops it (an episode's next takes its place), but not
 	// marked watched: the viewer did not finish it.
 	Dismiss bool `json:"dismiss,omitempty"`
+	// PlayedMsAgo: how long before this request the position was played, in
+	// milliseconds - a position a phone kept while it had no connection,
+	// sent as its age so that the phone's clock does not matter. It is the
+	// position at now() minus the age, written only over an older one: a
+	// newer position another device wrote meanwhile stays. Without it the
+	// position is now's, written as before.
+	PlayedMsAgo *int64 `json:"played_ms_ago,omitempty"`
 }
 
 // getProgress returns { position_sec } for the current user + item: the
@@ -57,7 +65,10 @@ func getProgress(s *store.Store) http.HandlerFunc {
 // same for each, and read back per episode. A position in the title's
 // finished end (store.Finished) marks it watched too, as the player's own
 // POST …/watched does: one rule, here, whichever client played it - but
-// for a dismiss, which only takes the title off Continue Watching.
+// for a dismiss, which only takes the title off Continue Watching. A
+// position sent with its age (played_ms_ago) is written only where the row
+// is older, and marks watched only what it wrote: a film finished on the TV
+// stays finished when the phone's earlier second comes in later.
 func postProgress(s *store.Store, kc *katalog.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := auth.SubjectFromContext(r.Context())
@@ -78,14 +89,31 @@ func postProgress(s *store.Store, kc *katalog.Client) http.HandlerFunc {
 			return
 		}
 		ids := fileOf(r, s, kc, userID, itemID)
-		if err := s.SaveProgress(r.Context(), userID, ids, body.PositionSec, body.DurationSec); err != nil {
-			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if !body.Dismiss && store.Finished(body.PositionSec, body.DurationSec) {
-			if err := s.MarkWatched(r.Context(), userID, ids...); err != nil {
+		finished := !body.Dismiss && store.Finished(body.PositionSec, body.DurationSec)
+		if body.PlayedMsAgo == nil {
+			if err := s.SaveProgress(r.Context(), userID, ids, body.PositionSec, body.DurationSec); err != nil {
 				http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
 				return
+			}
+			if finished {
+				if err := s.MarkWatched(r.Context(), userID, ids...); err != nil {
+					http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
+			}
+		} else {
+			// An age below zero (a clock set back since) is now's.
+			ago := time.Duration(max(*body.PlayedMsAgo, 0)) * time.Millisecond
+			won, err := s.SaveProgressPlayed(r.Context(), userID, ids, body.PositionSec, body.DurationSec, ago)
+			if err != nil {
+				http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if finished && len(won) > 0 {
+				if err := s.MarkWatchedPlayed(r.Context(), userID, ago, won...); err != nil {
+					http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
 			}
 		}
 		metrics.ProgressSaves.Inc()

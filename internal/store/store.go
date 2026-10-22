@@ -170,6 +170,23 @@ func (s *Store) MarkWatched(ctx context.Context, userID string, itemIDs ...strin
 	return err
 }
 
+// MarkWatchedPlayed is MarkWatched for a title finished ago before now (a
+// position a phone kept without a connection): watched then, or later where
+// it was watched again since.
+func (s *Store) MarkWatchedPlayed(ctx context.Context, userID string, ago time.Duration, itemIDs ...string) error {
+	itemIDs = distinct(itemIDs)
+	if s == nil || s.p == nil || userID == "" || len(itemIDs) == 0 {
+		return nil
+	}
+	_, err := s.p.Exec(ctx,
+		`INSERT INTO watched_history AS w (user_id, item_id, watched_at)
+		 SELECT $1, id, now() - ($3::double precision * interval '1 millisecond') FROM unnest($2::text[]) AS t(id)
+		 ON CONFLICT (user_id, item_id) DO UPDATE
+		   SET watched_at = GREATEST(w.watched_at, EXCLUDED.watched_at)`,
+		userID, itemIDs, max(ago, 0).Milliseconds())
+	return err
+}
+
 // distinct is ids without the empty ones and without repeats, in their
 // order: one statement writes each row once.
 func distinct(ids []string) []string {
@@ -486,4 +503,50 @@ func (s *Store) SaveProgress(ctx context.Context, userID string, itemIDs []strin
 		       updated_at   = now()`,
 		userID, itemIDs, positionSec, durationSec)
 	return err
+}
+
+// SaveProgressPlayed is SaveProgress for a position played ago before now -
+// one a phone kept while it had no connection, sent later: the position at
+// now() - ago, written for each of itemIDs only where the row is older (an
+// earlier position, or none), so that a newer one another device wrote
+// meanwhile stays. The ids it was written for are returned: where the write
+// won.
+func (s *Store) SaveProgressPlayed(ctx context.Context, userID string, itemIDs []string, positionSec, durationSec int, ago time.Duration) ([]string, error) {
+	itemIDs = distinct(itemIDs)
+	if s == nil || s.p == nil || userID == "" || len(itemIDs) == 0 {
+		return nil, nil
+	}
+	if positionSec < 0 {
+		positionSec = 0
+	}
+	rows, err := s.p.Query(ctx,
+		`INSERT INTO playback_progress AS p
+		   (user_id, item_id, position_sec, duration_sec, updated_at)
+		 SELECT $1, id, $3, $4, now() - ($5::double precision * interval '1 millisecond') FROM unnest($2::text[]) AS t(id)
+		 ON CONFLICT (user_id, item_id) DO UPDATE
+		   SET position_sec = EXCLUDED.position_sec,
+		       duration_sec = GREATEST(EXCLUDED.duration_sec, p.duration_sec),
+		       updated_at   = EXCLUDED.updated_at
+		   WHERE p.updated_at < EXCLUDED.updated_at
+		 RETURNING item_id`,
+		userID, itemIDs, positionSec, durationSec, max(ago, 0).Milliseconds())
+	if err != nil {
+		return nil, err
+	}
+	won, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, err
+	}
+	// In the order asked.
+	wrote := make(map[string]bool, len(won))
+	for _, id := range won {
+		wrote[id] = true
+	}
+	out := make([]string, 0, len(won))
+	for _, id := range itemIDs {
+		if wrote[id] {
+			out = append(out, id)
+		}
+	}
+	return out, nil
 }

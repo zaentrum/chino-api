@@ -130,6 +130,70 @@ paths:
           description: No bearer, or one that is not valid
         "502":
           description: The catalog could not say; nothing is answered
+  /v1/items/{id}/progress:
+    get:
+      summary: The viewer's resume point of a title
+      description: >-
+        position_sec is 0 for a title never begun, and for a finished one
+        (its last 5 % or 2 minutes), which then has finished true.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  position_sec: { type: integer }
+                  finished: { type: boolean }
+        "404":
+          description: No such item, or one the viewer's rating cap does not allow
+    post:
+      summary: Save the viewer's position in a title
+      description: >-
+        Written for every episode of the file the title plays. A finished
+        position marks the title watched, but with dismiss. With
+        played_ms_ago - the position's age when it is sent, a position a
+        phone kept without a connection - it is the position at now() minus
+        that age, written only where the saved one is older, and a finished
+        one marks watched only where it was written. Without it the position
+        is now's, written over any.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [position_sec]
+              properties:
+                position_sec: { type: integer }
+                duration_sec: { type: integer }
+                dismiss:
+                  type: boolean
+                  description: Taken off Continue Watching - saved at its end, not marked watched
+                played_ms_ago:
+                  type: integer
+                  format: int64
+                  description: How long before the request the position was played, in milliseconds; below 0 counts as 0
+      responses:
+        "204":
+          description: Saved, or older than the saved position and so not written
+        "400":
+          description: No body, or no JSON
+        "404":
+          description: No such item, or one the viewer's rating cap does not allow
   /v1/items:
     get:
       summary: List items for this product (stub during beta)

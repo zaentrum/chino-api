@@ -137,3 +137,100 @@ func TestProgressAndWatchedOfSeveralItems(t *testing.T) {
 		t.Errorf("no store: %v", err)
 	}
 }
+
+// A position played some time ago - kept on a phone while it had no
+// connection - is written only where the row is older: a newer position
+// another device wrote meanwhile stays. Each row of a file is decided on its
+// own, a title with no row yet takes it, and the write says where it won. A
+// write without an age is now's, over any row, as before.
+func TestALatePositionDoesNotOverwriteANewerOne(t *testing.T) {
+	st := testStore(t)
+	ctx := context.Background()
+	// The TV finished the film just now.
+	if err := st.SaveProgress(ctx, "anna", []string{"m1"}, 5300, 5400); err != nil {
+		t.Fatal(err)
+	}
+	// The phone's position of two hours ago comes in.
+	won, err := st.SaveProgressPlayed(ctx, "anna", []string{"m1"}, 45, 5400, 2*time.Hour)
+	if err != nil || len(won) != 0 {
+		t.Errorf("an older position over a newer one: won %v (%v)", won, err)
+	}
+	if got := progressOf(t, st, "anna"); got != "m1 5300/5400" {
+		t.Errorf("the newer position: %q", got)
+	}
+
+	// Where the row is three hours old, a position of a minute ago is
+	// written, at the time it was played.
+	if _, err := st.p.Exec(ctx, `UPDATE playback_progress SET updated_at = now() - interval '3 hours' WHERE user_id = 'anna'`); err != nil {
+		t.Fatal(err)
+	}
+	won, err = st.SaveProgressPlayed(ctx, "anna", []string{"m1"}, 1200, 5400, time.Minute)
+	if err != nil || strings.Join(won, " ") != "m1" {
+		t.Errorf("a newer position over an older one: won %v (%v)", won, err)
+	}
+	if got := progressOf(t, st, "anna"); got != "m1 1200/5400" {
+		t.Errorf("after the newer position: %q", got)
+	}
+	var ageSec float64
+	if err := st.p.QueryRow(ctx, `SELECT EXTRACT(EPOCH FROM now() - updated_at) FROM playback_progress WHERE user_id = 'anna' AND item_id = 'm1'`).Scan(&ageSec); err != nil || ageSec < 50 || ageSec > 70 {
+		t.Errorf("written %v s ago (%v), want about 60", ageSec, err)
+	}
+
+	// The episodes of one file: one has a newer row, the other none.
+	if err := st.SaveProgress(ctx, "anna", []string{"e16"}, 300, 1800); err != nil {
+		t.Fatal(err)
+	}
+	won, err = st.SaveProgressPlayed(ctx, "anna", []string{"e15", "e16", "e15"}, 600, 1800, 10*time.Minute)
+	if err != nil || strings.Join(won, " ") != "e15" {
+		t.Errorf("one file's episodes: won %v (%v), want e15", won, err)
+	}
+	if got := progressOf(t, st, "anna"); got != "e15 600/1800, e16 300/1800, m1 1200/5400" {
+		t.Errorf("one file's episodes: %q", got)
+	}
+
+	// Without an age, as before: now's, whatever the row says.
+	if err := st.SaveProgress(ctx, "anna", []string{"e16"}, 30, 1800); err != nil {
+		t.Fatal(err)
+	}
+	if got := progressOf(t, st, "anna"); !strings.Contains(got, "e16 30/1800") {
+		t.Errorf("a write without an age: %q", got)
+	}
+	// Another person's rows are their own.
+	if won, err := st.SaveProgressPlayed(ctx, "ben", []string{"m1"}, 99, 5400, time.Hour); err != nil || strings.Join(won, " ") != "m1" {
+		t.Errorf("another person's first position: won %v (%v)", won, err)
+	}
+	if got := progressOf(t, st, "anna"); !strings.Contains(got, "m1 1200/5400") {
+		t.Errorf("anna's row after ben's write: %q", got)
+	}
+}
+
+// A title finished in a late write is watched when it was played, or later
+// where it was watched again since.
+func TestALateFinishIsWatchedWhenItWasPlayed(t *testing.T) {
+	st := testStore(t)
+	ctx := context.Background()
+	// How long ago m1 was watched, as the database counts it.
+	watchedAgo := func() time.Duration {
+		t.Helper()
+		var sec float64
+		if err := st.p.QueryRow(ctx, `SELECT EXTRACT(EPOCH FROM now() - watched_at) FROM watched_history WHERE user_id = 'anna' AND item_id = 'm1'`).Scan(&sec); err != nil {
+			t.Fatal(err)
+		}
+		return time.Duration(sec * float64(time.Second))
+	}
+	if err := st.MarkWatchedPlayed(ctx, "anna", 2*time.Hour, "m1"); err != nil {
+		t.Fatal(err)
+	}
+	if ago := watchedAgo(); ago < 119*time.Minute || ago > 121*time.Minute {
+		t.Errorf("watched %v ago, want two hours", ago)
+	}
+	if err := st.MarkWatched(ctx, "anna", "m1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkWatchedPlayed(ctx, "anna", 3*time.Hour, "m1"); err != nil {
+		t.Fatal(err)
+	}
+	if ago := watchedAgo(); ago > time.Minute {
+		t.Errorf("watched again since: %v ago, want now", ago)
+	}
+}

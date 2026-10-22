@@ -37,7 +37,7 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `GET /api/v1/me/continue-watching` | bearer JWT | resume list |
 | `POST /api/v1/me/available` | bearer JWT | which of the titles a client keeps the viewer may watch now, in one request ([below](#downloads)) |
 | `GET /api/v1/me/watchlists` | bearer JWT | named watchlists |
-| `GET/POST /api/v1/items/{id}/progress` | bearer JWT | playback progress, a file's ([below](#one-file-several-episodes)); the resume point, none for a finished title ([below](#finished-titles)) |
+| `GET/POST /api/v1/items/{id}/progress` | bearer JWT | playback progress, a file's ([below](#one-file-several-episodes)); the resume point, none for a finished title ([below](#finished-titles)); a late position never over a newer one ([below](#downloads)) |
 | `POST /api/v1/play/events` | bearer JWT or stream token | playback telemetry (the stream token for `sendBeacon`) |
 | `GET /api/v1/events` | bearer JWT or stream token | live catalog notifications (SSE) |
 | `GET /api/v1/notices` | bearer JWT | what addons told the signed-in person, from portal-api — best effort ([below](#notices)) |
@@ -341,7 +341,7 @@ the watched state is served:
 
 A phone keeps downloads (packaged titles fetched from the playback routes) and
 plays them without a connection; `GET /api/config`'s `features.downloads`
-says whether it may offer them.
+says whether it may offer them. Two routes serve it.
 
 - `POST /api/v1/me/available` with `{"ids": [...]}` (at most 500) answers
   `{"ids": [...]}`: the ids asked about that the caller may watch now, in
@@ -354,6 +354,14 @@ says whether it may offer them.
   account, and a parent lowering a child's cap takes what is above it off
   the child's phone. When the catalog cannot say, the answer is 502 and no
   ids, and the phone deletes nothing.
+- `POST /api/v1/items/{id}/progress` takes `played_ms_ago`, the age of the
+  position when it is sent, in milliseconds: a position the phone kept while
+  it had no connection. It is the position at `now()` minus the age (the
+  phone's clock does not matter), written only where the saved one is older,
+  and a finished one marks the title watched only where it was written. A
+  film finished on the TV stays finished when the phone's earlier second
+  comes in later. Without the field a position is now's, written over any,
+  as every other client's is.
 
 ## Local development
 
