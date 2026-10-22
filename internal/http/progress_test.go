@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zaentrum/chino-api/internal/config"
 	"github.com/zaentrum/chino-api/internal/eventsse"
@@ -86,5 +87,72 @@ func TestALatePositionMarksWatchedOnlyWhereItWasWritten(t *testing.T) {
 	post(`{"position_sec":300,"duration_sec":5400,"played_ms_ago":-5000}`)
 	if pos, _ := position(); pos != 300 {
 		t.Errorf("an age below zero: at %d, want 300", pos)
+	}
+}
+
+// A watched mark a phone kept without a connection comes in with its age:
+// the title is watched then - an hour before the request - and a later
+// watch another device made meanwhile stays. A mark without a body is
+// now's, as the players and the web send it.
+func TestALateWatchedMarkIsWatchedWhenItWasFinished(t *testing.T) {
+	st := testStore(t)
+	is := newIssuer(t)
+	katalog := ratedKatalog(t)
+	h, err := NewRouter(config.Config{OIDCIssuer: is.URL, OIDCAudience: "chino", OIDCEnabled: true,
+		KatalogBaseURL: katalog.URL, StreamBaseURL: "http://chino-stream.invalid",
+		ArtworkBaseURL: "http://katalog-manager.invalid", StreamSigningKey: signingKey}, st, eventsse.NewBroker())
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer := bearerWith(t, is, "anna", nil)
+	mark := func(body string) {
+		t.Helper()
+		var r *http.Request
+		if body == "" {
+			r = httptest.NewRequest(http.MethodPost, "/api/v1/me/items/kid/watched", nil)
+		} else {
+			r = httptest.NewRequest(http.MethodPost, "/api/v1/me/items/kid/watched", strings.NewReader(body))
+		}
+		r.Header = viewer.Clone()
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusNoContent {
+			t.Fatalf("POST watched %q: %d %s", body, w.Code, w.Body)
+		}
+	}
+	watchedAt := func() time.Time {
+		t.Helper()
+		at, err := st.WatchedAtBatch(context.Background(), "anna", []string{"kid"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, ok := at["kid"]
+		if !ok {
+			t.Fatal("not watched")
+		}
+		return got
+	}
+	// Finished on the phone an hour ago, sent now.
+	mark(`{"played_ms_ago":3600000}`)
+	then := watchedAt()
+	// Watched again on the TV just now, without a body: an hour later than
+	// the phone's - as the database's clock tells both.
+	mark("")
+	now := watchedAt()
+	if gap := now.Sub(then); gap < 59*time.Minute || gap > 61*time.Minute {
+		t.Errorf("a mark of an hour ago, then one now: %v apart, want about an hour", gap)
+	}
+	// The phone's mark of two hours ago comes in late: the TV's stays.
+	mark(`{"played_ms_ago":7200000}`)
+	if got := watchedAt(); !got.Equal(now) {
+		t.Errorf("a late mark over a newer one: watched at %v, want %v", got, now)
+	}
+	// Not JSON: refused, nothing written.
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/me/items/kid/watched", strings.NewReader("{"))
+	r.Header = viewer.Clone()
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("a body that is not JSON: %d, want 400", w.Code)
 	}
 }

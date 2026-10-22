@@ -383,6 +383,10 @@ says whether it may offer them. Two routes serve it.
   film finished on the TV stays finished when the phone's earlier second
   comes in later. Without the field a position is now's, written over any,
   as every other client's is.
+- `POST /api/v1/me/items/{id}/watched` takes the same `played_ms_ago`, as an
+  optional JSON body: a watched mark the phone kept while it had no
+  connection. The title is watched at `now()` minus the age, or later where
+  it was watched again since. Without a body the mark is now's, as before.
 
 ## Local development
 

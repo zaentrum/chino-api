@@ -1,9 +1,13 @@
 package http
 
 import (
+	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -11,6 +15,16 @@ import (
 	"github.com/zaentrum/chino-api/internal/katalog"
 	"github.com/zaentrum/chino-api/internal/store"
 )
+
+// watchedBody is a watched mark's optional body. PlayedMsAgo: how long
+// before this request the title was finished, in milliseconds - a mark a
+// phone kept while it had no connection, sent as its age so that the
+// phone's clock does not matter: the title is watched then, or later where
+// it was watched again since. Without it - or without a body, as the
+// players and the web send it - the mark is now's.
+type watchedBody struct {
+	PlayedMsAgo *int64 `json:"played_ms_ago,omitempty"`
+}
 
 // postWatched marks an item as fully watched for the current user.
 // Called by the player when the user enters the credits segment OR the
@@ -20,6 +34,8 @@ import (
 // continue-watching substitute the next episode for finished rows. One
 // play of a file that holds several episodes watches each of them: the
 // row is written for every episode of the file the item plays (fileOf).
+// A mark sent with its age (played_ms_ago) is watched at now() minus it,
+// never over a later watch (store.MarkWatchedPlayed).
 //
 // Idempotent: re-watching just bumps watched_at.
 func postWatched(st *store.Store, kc *katalog.Client) http.HandlerFunc {
@@ -34,7 +50,23 @@ func postWatched(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 			http.Error(w, "no subject", http.StatusUnauthorized)
 			return
 		}
-		if err := st.MarkWatched(r.Context(), userID, fileOf(r, st, kc, userID, itemID)...); err != nil {
+		var body watchedBody
+		if r.Body != nil {
+			defer r.Body.Close()
+			if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+				http.Error(w, "bad JSON: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		ids := fileOf(r, st, kc, userID, itemID)
+		var err error
+		if body.PlayedMsAgo == nil {
+			err = st.MarkWatched(r.Context(), userID, ids...)
+		} else {
+			// An age below zero (a clock set back since) is now's.
+			err = st.MarkWatchedPlayed(r.Context(), userID, time.Duration(max(*body.PlayedMsAgo, 0))*time.Millisecond, ids...)
+		}
+		if err != nil {
 			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
