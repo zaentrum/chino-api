@@ -177,6 +177,14 @@ decodes and the subtitle group the package has; `q=<name>` from `/play/info`'s
 `PlayQuality`). A quality menu shows `qualities` when it has two or more
 entries, by `label`, and reloads the master with `q=<name>`.
 
+A web player on another origin, a Cast receiver among them, plays from the
+routes that take a stream token (playlists, segments, subtitles, artwork,
+portraits): their answers, errors too, carry `Access-Control-Allow-Origin: *`,
+and they answer a preflight (GET, the `Range` header) without a credential.
+Their credential is in the URL, never a cookie, so this lets no other site use
+a viewer's session. The routes that take a bearer in a header send no CORS
+headers, and chino-api passes no upstream's `Access-Control-*` headers on.
+
 ### Playback telemetry
 
 `POST /api/v1/play/events` takes the players' events in batches,

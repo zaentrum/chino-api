@@ -242,6 +242,12 @@ func titleRoutes(t *testing.T, h http.Handler) [][2]string {
 	t.Helper()
 	var out [][2]string
 	err := chi.Walk(h.(chi.Routes), func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		// A preflight is answered alike for every path of the media routes,
+		// before a credential or a title is looked at: it says nothing of a
+		// title (TestAPreflightSaysNothingOfATitle).
+		if method == http.MethodOptions {
+			return nil
+		}
 		if (strings.Contains(route, "{id}") || strings.Contains(route, "{itemId}")) && !strings.HasPrefix(route, "/api/v1/people/") {
 			out = append(out, [2]string{method, route})
 		}

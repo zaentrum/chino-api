@@ -224,9 +224,12 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 		// bearer. The stream token is the one credential that survives
 		// an OIDC silent-renew without changing the URL — also used on
 		// poster / backdrop <img src> URLs so the browser doesn't
-		// reload every image on every renewal.
+		// reload every image on every renewal. Open to web players on
+		// other origins, a Cast receiver among them (cors.go).
 		r.Group(func(r chi.Router) {
+			r.Use(mediaCORS)
 			r.Use(verifier.StreamMiddleware)
+			r = corsGroup{r}
 			// Artwork: served from the stream group so <img src=...>
 			// URLs stay stable across silent renews. With the OIDC
 			// token in the URL, every renewal rotated the URL and the

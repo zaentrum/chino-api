@@ -734,7 +734,10 @@ func (c *Client) ProxyStream(w http.ResponseWriter, r *http.Request, upstreamPat
 	}
 	defer resp.Body.Close()
 	for k, vs := range resp.Header {
-		if k == "Authorization" {
+		// Which origins may read an answer is chino-api's to say, on its
+		// own routes: an upstream's Access-Control-* beside chino-api's
+		// would go out twice, and a browser refuses an answer with two.
+		if k == "Authorization" || strings.HasPrefix(k, "Access-Control-") {
 			continue
 		}
 		for _, v := range vs {
