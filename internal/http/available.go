@@ -30,8 +30,15 @@ const availableLookups = 8
 // capped viewer is held to its cap as on every route of one title
 // (gate.visibleIDs: a title above it, an unrated one the catalog's setting
 // hides and an id of no title are left out); for a viewer without a cap the
-// catalog's item route decides, a title it holds. When the catalog cannot
-// say, the answer is 502 with no ids - and a client then deletes nothing.
+// catalog's item route decides, a title it holds. An answer that leaves
+// out every id asked also says how many titles of the library the caller may
+// watch ({"ids": [], "titles": n}, the catalog's list for the caller, a
+// capped one held to its cap): with n above 0 the empty answer is the
+// library's word - the titles left it, or the cap no longer allows them - and
+// not a catalog being imported anew or reset, which shows nobody anything for
+// a while (n is 0); a phone takes a title off only on such a word. When the
+// catalog cannot say, the answer is 502 with no ids - and a client then
+// deletes nothing.
 func postAvailable(g gate, kc *katalog.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
@@ -65,7 +72,16 @@ func postAvailable(g gate, kc *katalog.Client) http.HandlerFunc {
 		if allowed == nil {
 			allowed = []string{}
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ids": allowed})
+		answer := map[string]any{"ids": allowed}
+		if len(ids) > 0 && len(allowed) == 0 {
+			n, err := kc.CountAll(r.Context(), bearerFrom(r))
+			if err != nil {
+				catalogUnavailable(w, err)
+				return
+			}
+			answer["titles"] = n
+		}
+		writeJSON(w, http.StatusOK, answer)
 	}
 }
 

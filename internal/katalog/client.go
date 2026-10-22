@@ -415,6 +415,31 @@ func (c *Client) newRequest(ctx context.Context, path string, q url.Values, bear
 }
 
 func (c *Client) listAt(ctx context.Context, bearer, path, q string, limit, offset int, extra url.Values) ([]Item, error) {
+	raw, err := c.listPage(ctx, bearer, path, q, limit, offset, extra)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Item, 0, len(raw.Items))
+	for _, u := range raw.Items {
+		out = append(out, u.toItem())
+	}
+	return out, nil
+}
+
+// CountAll is how many titles katalog-api's cross-type list holds for the
+// viewer of ctx - a capped one's cap as max_rating, as every catalog request
+// (newRequest): the total the list reports, or what its first page holds
+// where it reports none. 0 is a catalog that shows the viewer nothing.
+func (c *Client) CountAll(ctx context.Context, bearer string) (int, error) {
+	raw, err := c.listPage(ctx, bearer, "/api/v1/items", "", 1, 0, nil)
+	if err != nil {
+		return 0, err
+	}
+	return max(raw.Total, len(raw.Items)), nil
+}
+
+// listPage is one page of katalog-api's list at path, as it answers it.
+func (c *Client) listPage(ctx context.Context, bearer, path, q string, limit, offset int, extra url.Values) (*listResult, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
@@ -451,11 +476,7 @@ func (c *Client) listAt(ctx context.Context, bearer, path, q string, limit, offs
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return nil, fmt.Errorf("decode katalog: %w", err)
 	}
-	out := make([]Item, 0, len(raw.Items))
-	for _, u := range raw.Items {
-		out = append(out, u.toItem())
-	}
-	return out, nil
+	return &raw, nil
 }
 
 // GetItem returns a single item by id, no associations. 404 → (nil, nil).

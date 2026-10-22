@@ -98,8 +98,12 @@ paths:
         downloads the answer leaves out. A capped viewer is held to its cap
         as on every route of one title (a title above it, an unrated one the
         catalog's setting hides and an id of no title are left out); for a
-        viewer without a cap the catalog decides - a title it holds. When the
-        catalog cannot say, the answer is 502 and no ids.
+        viewer without a cap the catalog decides - a title it holds. An
+        answer that leaves out every id asked also says how many titles of
+        the library the viewer may watch (titles): above 0, the empty answer
+        is the library's word; 0 is a catalog that shows the viewer nothing
+        (imported anew, reset), and a phone deletes nothing on it alone. When
+        the catalog cannot say, the answer is 502 and no ids.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -124,6 +128,11 @@ paths:
                   ids:
                     type: array
                     items: { type: string }
+                  titles:
+                    type: integer
+                    description: >-
+                      With an answer that leaves out every id asked only: how
+                      many titles of the library the viewer may watch now
         "400":
           description: No body, no JSON, or more than 500 ids
         "401":

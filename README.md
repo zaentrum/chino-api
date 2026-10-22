@@ -373,8 +373,13 @@ says whether it may offer them. Two routes serve it.
   starts and comes to the front, and before a download plays, and deletes
   the downloads the answer leaves out: the library decides, for every
   account, and a parent lowering a child's cap takes what is above it off
-  the child's phone. When the catalog cannot say, the answer is 502 and no
-  ids, and the phone deletes nothing.
+  the child's phone. An answer that leaves out every id asked also says how
+  many titles of the library the caller may watch, `{"ids": [], "titles":
+  n}`: above 0 the empty answer is the library's word, even for an account
+  whose only download it is; 0 is a catalog that shows the caller nothing
+  (imported anew, reset), and the phone does not take a title off on that
+  alone. When the catalog cannot say, the answer is 502 and no ids, and the
+  phone deletes nothing.
 - `POST /api/v1/items/{id}/progress` takes `played_ms_ago`, the age of the
   position when it is sent, in milliseconds: a position the phone kept while
   it had no connection. It is the position at `now()` minus the age (the
