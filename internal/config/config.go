@@ -119,6 +119,15 @@ type Config struct {
 	OpenProjectURL   string
 	OpenProjectToken string
 
+	// DownloadsEnabled says whether the apps may offer downloads: a phone
+	// keeping a packaged title's renditions, its sidecar subtitles and its
+	// artwork to play without a connection. They are fetched from the
+	// playback routes as a stream is, so the switch changes nothing on the
+	// server; GET /api/config reports it as features.downloads and a client
+	// offers no download while it is false. DOWNLOADS_ENABLED, true unless
+	// it says false ("false", "0", "no", "off").
+	DownloadsEnabled bool
+
 	// Kafka catalog-event tail for the live-refresh SSE bridge (/api/v1/events).
 	// Empty brokers => the bridge is inert (endpoint serves heartbeats only).
 	KafkaBrokers         []string
@@ -162,6 +171,8 @@ func Load() Config {
 		OpenProjectProjectID: envInt("OPENPROJECT_PROJECT_ID", 36),
 		OpenProjectBugTypeID: envInt("OPENPROJECT_BUG_TYPE_ID", 7),
 
+		DownloadsEnabled: envSwitch("DOWNLOADS_ENABLED", true),
+
 		KafkaBrokers:     splitCSV(envDefault("KAFKA_BROKERS", "")),
 		KafkaCertDir:     envDefault("KAFKA_CERT_DIR", ""),
 		KafkaTopicPrefix: envDefault("KAFKA_TOPIC_PREFIX", "stube."),
@@ -191,6 +202,21 @@ func envInt(key string, def int) int {
 		return def
 	}
 	return n
+}
+
+// envSwitch reads an on/off env var: "true", "1", "yes", "on" turn it on,
+// "false", "0", "no", "off" turn it off, in any case; unset, blank or
+// anything else leaves the default. Like envInt, a bad value never aborts
+// boot.
+func envSwitch(key string, def bool) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "true", "1", "yes", "on":
+		return true
+	case "false", "0", "no", "off":
+		return false
+	default:
+		return def
+	}
 }
 
 func splitCSV(s string) []string {

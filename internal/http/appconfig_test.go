@@ -37,3 +37,27 @@ func TestAppConfigReportsWhetherFeedbackIsOn(t *testing.T) {
 		}
 	}
 }
+
+// features.downloads is what DOWNLOADS_ENABLED made of cfg.DownloadsEnabled,
+// beside features.feedback, which it leaves as it is.
+func TestAppConfigReportsWhetherDownloadsAreOn(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		rec := httptest.NewRecorder()
+		appConfig(config.Config{DownloadsEnabled: on, OpenProjectToken: "a-token"})(rec, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("downloads %v: status %d", on, rec.Code)
+		}
+		var doc struct {
+			Features map[string]bool `json:"features"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+			t.Fatalf("downloads %v: %v", on, err)
+		}
+		if got, ok := doc.Features["downloads"]; !ok || got != on {
+			t.Errorf("features.downloads = %v (present %v), want %v", got, ok, on)
+		}
+		if !doc.Features["feedback"] {
+			t.Errorf("downloads %v: features.feedback = false, want true", on)
+		}
+	}
+}

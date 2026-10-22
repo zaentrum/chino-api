@@ -363,6 +363,12 @@ feedback endpoint answers 503 and clients keep the feature off: `GET /api/config
 says so in `features.feedback` (`true` only with a token), so a client can hide
 its bug-report entry points before anyone tries.
 
+`features.downloads` says whether a client may offer downloads, a packaged
+title kept on a phone to play without a connection: `true` unless
+`DOWNLOADS_ENABLED` is `false` (or `0`, `no`, `off`). A download is fetched from
+the playback routes, as a stream is, so the switch changes nothing else on the
+server; a client offers no download while it is `false`.
+
 ## Configuration
 
 Configured entirely through environment variables (see `internal/config`):
@@ -379,6 +385,7 @@ Configured entirely through environment variables (see `internal/config`):
 | `ADMIN_ROLE` | the realm role (`realm_access.roles` of the access token) that opens `/api/v1/admin/*` (default `zaentrum-admin`, as katalog-manager and the portal) |
 | `ADMIN_SUBJECTS` | deprecated: comma-separated OIDC `sub` values let through `/api/v1/admin/*` besides the role; empty by default, and it goes in a coming release |
 | `OPENPROJECT_URL` / `OPENPROJECT_TOKEN` / `OPENPROJECT_PROJECT_ID` / `OPENPROJECT_BUG_TYPE_ID` | feedback pipeline (optional) |
+| `DOWNLOADS_ENABLED` | whether `/api/config` lets the apps offer downloads (`features.downloads`; default `true`) |
 | `STREAM_SIGNING_KEY` | shared HMAC secret for signed `?stream=` URLs (optional) |
 | `ACCOUNT_DELETION_TOKEN` | the token chino-api and portal-api delete an account with (Secret `zaentrum-people`, key `deletion-token`, on the platform); empty: `DELETE /api/v1/me` answers 501 |
 | `PORTAL_BASE_URL` | portal-api, for addon slots, notices and account deletion (default `http://portal-api`) |

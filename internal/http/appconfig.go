@@ -34,9 +34,13 @@ func appConfig(cfg config.Config) http.HandlerFunc {
 			},
 			// What this server offers that a client should show only when
 			// it does. feedback: POST /api/v1/feedback files bug reports
-			// (it answers 503 when this is false).
+			// (it answers 503 when this is false). downloads: a phone may
+			// keep a packaged title to play without a connection
+			// (DOWNLOADS_ENABLED); a client offers no download while it is
+			// false.
 			"features": map[string]bool{
-				"feedback": feedbackEnabled(cfg),
+				"feedback":  feedbackEnabled(cfg),
+				"downloads": cfg.DownloadsEnabled,
 			},
 		})
 	}

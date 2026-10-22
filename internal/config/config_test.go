@@ -19,3 +19,29 @@ func TestKatalogManagerURL(t *testing.T) {
 		}
 	}
 }
+
+// Downloads are on unless DOWNLOADS_ENABLED turns them off; a value that is
+// neither on nor off leaves them on.
+func TestDownloadsEnabled(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  bool
+	}{
+		{"", true},
+		{"  ", true},
+		{"true", true},
+		{"1", true},
+		{"ON", true},
+		{"false", false},
+		{"False", false},
+		{"0", false},
+		{"no", false},
+		{" off ", false},
+		{"maybe", true},
+	} {
+		t.Setenv("DOWNLOADS_ENABLED", tc.value)
+		if got := Load().DownloadsEnabled; got != tc.want {
+			t.Errorf("DOWNLOADS_ENABLED %q: %v, want %v", tc.value, got, tc.want)
+		}
+	}
+}
