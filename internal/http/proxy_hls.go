@@ -177,7 +177,7 @@ func extraUpstream(w http.ResponseWriter, r *http.Request) string {
 }
 
 // proxyExtra forwards /api/v1/items/{id}/extras/{extraId}/play/<leaf> (the
-// master) to chino-stream's /api/play/{id}/extras/{extraId}/<leaf>.
+// master, /info) to chino-stream's /api/play/{id}/extras/{extraId}/<leaf>.
 func proxyExtra(kc *katalog.Client, leaf string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if base := extraUpstream(w, r); base != "" {

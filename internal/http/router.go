@@ -306,13 +306,16 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			r.With(title).Get("/items/{id}/play/trickplay/sprite-{n:[0-9]+}.jpg", proxyTrickplaySprite(streamKC))
 			// A title's extras (its trailers, teasers, featurettes, …
 			// packaged apart from it): an extra's master, its play_path in
-			// the item detail, and the renditions the master names,
-			// proxied to chino-stream's /api/play/{id}/extras/{extraId}/,
-			// query and all. The title gate holds a capped viewer to the
-			// rating of the title {id}; chino-stream serves an extra only
-			// under its own title. An extra has no progress, watched,
-			// segments, trickplay, /info or /prewarm.
+			// the item detail, its /play/info - how it plays for the
+			// client's caps and q, and where its picture is in the frame,
+			// as a title's - and the renditions the master names, proxied
+			// to chino-stream's /api/play/{id}/extras/{extraId}/, query and
+			// all. The title gate holds a capped viewer to the rating of
+			// the title {id}; chino-stream serves an extra only under its
+			// own title. An extra has no progress, watched, segments,
+			// trickplay or /prewarm.
 			r.With(title).Get("/items/{id}/extras/{extraId}/play/master.m3u8", proxyExtra(streamKC, "master.m3u8"))
+			r.With(title).Get("/items/{id}/extras/{extraId}/play/info", proxyExtra(streamKC, "info"))
 			r.With(title).Get("/items/{id}/extras/{extraId}/play/{rendId:[vas][0-9]+}/playlist.m3u8", proxyExtraRendition(streamKC, "playlist.m3u8"))
 			r.With(title).Get("/items/{id}/extras/{extraId}/play/{rendId:[va][0-9]+}/iframes.m3u8", proxyExtraRendition(streamKC, "iframes.m3u8"))
 			r.With(title).Get("/items/{id}/extras/{extraId}/play/{rendId:[va][0-9]+}/init.mp4", proxyExtraRendition(streamKC, "init.mp4"))

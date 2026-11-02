@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"reflect"
 	"strings"
@@ -17,10 +18,11 @@ import (
 const testExtra = "1b5c2a8e-6f0d-4c3e-9a51-2d7f0c4b8e01"
 
 // extraRoutes are the routes of one extra under its title's
-// /api/v1/items/{id}/extras/{extraId}/play/, one of each shape: its
-// package's, and those of the on-the-fly ladder chino-stream's master of it
-// names for a client that decodes none of the package's rungs.
-var extraRoutes = []string{"master.m3u8", "v0/playlist.m3u8", "a0/playlist.m3u8", "s0/playlist.m3u8",
+// /api/v1/items/{id}/extras/{extraId}/play/, one of each shape: its master
+// and /info, its package's renditions, and those of the on-the-fly ladder
+// chino-stream's master of it names for a client that decodes none of the
+// package's rungs.
+var extraRoutes = []string{"master.m3u8", "info", "v0/playlist.m3u8", "a0/playlist.m3u8", "s0/playlist.m3u8",
 	"v1/iframes.m3u8", "v0/init.mp4", "a0/init.mp4", "v0/seg-00001.m4s", "a0/seg-00004.m4s", "s0/seg-00002.vtt",
 	"high/index.m3u8", "medium/init.mp4", "low/3.m4s", "audio/0/index.m3u8", "audio/1/init.mp4", "audio/1/2.m4s"}
 
@@ -94,7 +96,7 @@ func TestExtrasAreProxiedWithTheStreamToken(t *testing.T) {
 	}
 	for _, route := range []string{"s0/init.mp4", "v0/seg-00001.vtt", "x0/playlist.m3u8", "v0/index.m3u8",
 		"highx/index.m3u8", "xlow/init.mp4", "high/playlist.m3u8", "high/seg-00001.m4s", "copy/index.m3u8",
-		"audio/x/index.m3u8", "audio/0/seg-00001.m4s", "trickplay/thumbnails.vtt", "info"} {
+		"audio/x/index.m3u8", "audio/0/seg-00001.m4s", "trickplay/thumbnails.vtt", "prewarm"} {
 		unrouted = append(unrouted, "/api/v1/items/i1/extras/"+testExtra+"/play/"+route)
 	}
 	for _, path := range append(unrouted, "/api/v1/items/i1/extras/"+testExtra+"/progress") {
@@ -104,6 +106,46 @@ func TestExtrasAreProxiedWithTheStreamToken(t *testing.T) {
 	}
 	if n := len(stream.requests()) - before; n != 0 {
 		t.Errorf("%d upstream requests for what is no extra's route or without a valid credential", n)
+	}
+}
+
+// An extra's /play/info is chino-stream's /info of the extra, proxied as the
+// title's /play/info is: the query (the stream token, caps, q) riding on,
+// and chino-stream's answer coming back as it is - its JSON, pictureArea
+// and all, and its 404 (no such extra of the title) and 502 (katalog-api
+// cannot say).
+func TestAnExtrasPlayInfoIsChinoStreamsInfoOfIt(t *testing.T) {
+	const info = `{"mode":"packaged","video_codec":"avc1.64001f","width":1280,"height":720,` +
+		`"pictureArea":{"left":0,"top":0.1278,"width":1,"height":0.7444},"default_quality":"auto"}` + "\n"
+	const unsaid = "2c6d3b9f-7a1e-4d4f-8b62-3e8a1d5c9f02" // an extra katalog-api cannot say of
+	stream := newRecorder(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/play/i1/extras/" + testExtra + "/info":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, info)
+		case "/api/play/i1/extras/" + unsaid + "/info":
+			http.Error(w, "catalog unavailable", http.StatusBadGateway)
+		default:
+			http.Error(w, "extra not found", http.StatusNotFound)
+		}
+	})
+	h := streamRouter(t, stream.URL)
+	query := "?stream=" + streamToken(t) + "&caps=avc,aac&q=v1"
+
+	w := do(h, "GET", "/api/v1/items/i1/extras/"+testExtra+"/play/info"+query, nil)
+	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "application/json" || w.Body.String() != info {
+		t.Errorf("info: %d %q %q", w.Code, w.Header().Get("Content-Type"), w.Body)
+	}
+	if got := stream.take(); len(got) != 1 || got[0] != "GET /api/play/i1/extras/"+testExtra+"/info"+query {
+		t.Errorf("chino-stream got %q", got)
+	}
+	for path, code := range map[string]int{
+		"/api/v1/items/i2/extras/" + testExtra + "/play/info": http.StatusNotFound,
+		"/api/v1/items/i1/extras/" + unsaid + "/play/info":    http.StatusBadGateway,
+	} {
+		if w := do(h, "GET", path+query, nil); w.Code != code {
+			t.Errorf("%s: %d %q, want chino-stream's %d", path, w.Code, w.Body, code)
+		}
 	}
 }
 
