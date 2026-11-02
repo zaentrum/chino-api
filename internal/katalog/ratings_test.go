@@ -149,6 +149,18 @@ func newVisibleCatalog(t *testing.T, ages map[string]int) *visibleCatalog {
 				return
 			}
 			_, _ = io.WriteString(w, `{"itemId":"`+strings.TrimPrefix(id, "sub-")+`","path":"/x.vtt"}`)
+		case strings.HasPrefix(r.URL.Path, "/api/v1/fonts/"):
+			v.asked[r.URL.Path]++
+			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/fonts/"), "/asset")
+			if id == "broken" {
+				http.Error(w, "unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			if !strings.HasPrefix(id, "font-") {
+				http.NotFound(w, r)
+				return
+			}
+			_, _ = io.WriteString(w, `{"itemId":"`+strings.TrimPrefix(id, "font-")+`","path":"/x.ttf","format":"ttf"}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -231,6 +243,37 @@ func TestSubtitleItem(t *testing.T) {
 	}
 	if v.asked["/api/v1/subtitles/sub-m16/asset"] != 1 || v.asked["/api/v1/subtitles/nothing/asset"] != 1 {
 		t.Errorf("asked %v, want each once", v.asked)
+	}
+}
+
+// FontItem is the title a package's font belongs to, "" for one there is not,
+// each asked once; a font's answer is kept apart from a subtitle's of the
+// same id, and a failure is an error, kept for nothing.
+func TestFontItem(t *testing.T) {
+	v := newVisibleCatalog(t, nil)
+	c := New(v.URL)
+	ctx := context.Background()
+	for i := 0; i < 2; i++ {
+		if item, err := c.FontItem(ctx, "font-m16"); err != nil || item != "m16" {
+			t.Fatalf("font-m16: %q %v", item, err)
+		}
+		if item, err := c.FontItem(ctx, "nothing"); err != nil || item != "" {
+			t.Fatalf("a font there is not: %q %v", item, err)
+		}
+	}
+	if v.asked["/api/v1/fonts/font-m16/asset"] != 1 || v.asked["/api/v1/fonts/nothing/asset"] != 1 {
+		t.Errorf("asked %v, want each once", v.asked)
+	}
+	if item, err := c.SubtitleItem(ctx, "font-m16"); err != nil || item != "" {
+		t.Errorf("a subtitle of a font's id: %q %v", item, err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := c.FontItem(ctx, "broken"); err == nil || !strings.Contains(err.Error(), "katalog font: 503") {
+			t.Errorf("katalog-api failing: %v", err)
+		}
+	}
+	if v.asked["/api/v1/fonts/broken/asset"] != 2 {
+		t.Errorf("a failure was kept: asked %d times", v.asked["/api/v1/fonts/broken/asset"])
 	}
 }
 

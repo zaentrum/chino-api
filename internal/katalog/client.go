@@ -127,6 +127,10 @@ type Item struct {
 	Trailers  []Trailer   `json:"trailers,omitempty"`
 	Extras    []Extra     `json:"extras,omitempty"`
 	Segments  *SegSummary `json:"segments,omitempty"`
+	// Fonts are the fonts of the package the item plays (katalog-api's
+	// fonts, with the subtitles), which the subtitles list offers; the item
+	// itself is sent without them.
+	Fonts []Font `json:"-"`
 
 	// WatchedAt is set by chino-api (not katalog) when the current user
 	// has marked this item watched. Nil means unwatched. Lives on Item
@@ -177,6 +181,36 @@ type Subtitle struct {
 	// by katalog-api. Points at /api/v1/play/subs/<id>.vtt which the
 	// chino-api proxy forwards to chino-stream → file on disk.
 	URL string `json:"url,omitempty"`
+	// StyledFormat is katalog-api's styled_format: the format of the styled
+	// original its package keeps beside the subtitle's file (ass, an ASS or
+	// an SSA script), for a player that draws styles; "" for a subtitle
+	// without one. The subtitle itself stays the file Format names. The
+	// subtitles list says it in Styled instead.
+	StyledFormat string `json:"styled_format,omitempty"`
+	// Styled is set by chino-api's subtitles handler, not katalog-api: the
+	// styled original's URL (/api/v1/play/subs/<id>.ass) and format.
+	Styled *StyledSubtitle `json:"styled,omitempty"`
+}
+
+// StyledSubtitle is a subtitle's styled original as the subtitles list
+// offers it: a player that draws styles (libass) loads the script at URL
+// with the fonts the list names; every other client plays the subtitle's
+// own URL.
+type StyledSubtitle struct {
+	URL    string `json:"url"`
+	Format string `json:"format"`
+}
+
+// Font is a font file of the package an item plays, which its styled
+// subtitles are drawn with: ID, Format (ttf, otf, ttc, woff, woff2; "" for
+// bytes that are none of them) and Names (the names a style or an override
+// tag asks for it by) are katalog-api's; URL is set by chino-api's subtitles
+// handler (/api/v1/play/fonts/<id>.<format>).
+type Font struct {
+	ID     string   `json:"id"`
+	Format string   `json:"format,omitempty"`
+	Names  []string `json:"names"`
+	URL    string   `json:"url,omitempty"`
 }
 
 // Trailer is one of the item's links to an online video, as katalog-api
@@ -259,6 +293,7 @@ type upstreamItem struct {
 	Genres    []string                `json:"genres,omitempty"`
 	Cast      []CastEntry             `json:"cast,omitempty"`
 	Subtitles []Subtitle              `json:"subtitles,omitempty"`
+	Fonts     []Font                  `json:"fonts,omitempty"`
 	Trailers  []Trailer               `json:"trailers,omitempty"`
 	Extras    []upstreamExtra         `json:"extras,omitempty"`
 	Segments  *upstreamSegmentSummary `json:"segments,omitempty"`
@@ -308,6 +343,7 @@ func (u upstreamItem) toItem() Item {
 		Genres:        u.Genres,
 		Cast:          u.Cast,
 		Subtitles:     u.Subtitles,
+		Fonts:         u.Fonts,
 		Trailers:      u.Trailers,
 		Roles:         u.Roles,
 

@@ -43,6 +43,7 @@ type answers struct {
 	mu       sync.Mutex
 	visible  map[string]answer // "<cap>|<id>"
 	subtitle map[string]answer // subtitle id -> its title's id (answer.item)
+	font     map[string]answer // font id -> its title's id (answer.item)
 	file     map[string]answer // "<cap>|<id>" -> the episodes of its file (answer.items, files.go)
 }
 
@@ -162,25 +163,39 @@ func (c *Client) askVisible(ctx context.Context, maxRating int, ids []string) (m
 // as katalog-api's GET /api/v1/subtitles/{id}/asset says it; "" when there is
 // no such subtitle. Kept for subtitleTTL.
 func (c *Client) SubtitleItem(ctx context.Context, subID string) (string, error) {
+	return c.assetItem(ctx, &c.visible.subtitle, "subtitle", "/api/v1/subtitles/"+url.PathEscape(subID)+"/asset", subID)
+}
+
+// FontItem is the id of the title the package's font fontID belongs to, as
+// katalog-api's GET /api/v1/fonts/{id}/asset says it; "" when there is no
+// such font, and of a katalog-api without fonts. Kept for subtitleTTL: a
+// font does not move to another title either.
+func (c *Client) FontItem(ctx context.Context, fontID string) (string, error) {
+	return c.assetItem(ctx, &c.visible.font, "font", "/api/v1/fonts/"+url.PathEscape(fontID)+"/asset", fontID)
+}
+
+// assetItem is the itemId katalog-api's asset lookup at path answers, kept in
+// *m under id for subtitleTTL; "" for its 404. what names the asset in an
+// error.
+func (c *Client) assetItem(ctx context.Context, m *map[string]answer, what, path, id string) (string, error) {
 	now := time.Now()
 	c.visible.mu.Lock()
-	if c.visible.subtitle == nil {
-		c.visible.subtitle = map[string]answer{}
+	if *m == nil {
+		*m = map[string]answer{}
 	}
-	a, ok := c.visible.subtitle[subID]
+	a, ok := (*m)[id]
 	c.visible.mu.Unlock()
 	if ok && now.Before(a.until) {
 		return a.item, nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		c.BaseURL+"/api/v1/subtitles/"+url.PathEscape(subID)+"/asset", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Accept", "application/json")
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("katalog subtitle: %w", err)
+		return "", fmt.Errorf("katalog %s: %w", what, err)
 	}
 	defer resp.Body.Close()
 	item := ""
@@ -190,16 +205,16 @@ func (c *Client) SubtitleItem(ctx context.Context, subID string) (string, error)
 			ItemID string `json:"itemId"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-			return "", fmt.Errorf("katalog subtitle: %w", err)
+			return "", fmt.Errorf("katalog %s: %w", what, err)
 		}
 		item = raw.ItemID
 	case http.StatusNotFound:
 	default:
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return "", fmt.Errorf("katalog subtitle: %d %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("katalog %s: %d %s", what, resp.StatusCode, string(body))
 	}
 	c.visible.mu.Lock()
-	keep(c.visible.subtitle, subID, answer{item: item, until: now.Add(subtitleTTL)}, now)
+	keep(*m, id, answer{item: item, until: now.Add(subtitleTTL)}, now)
 	c.visible.mu.Unlock()
 	return item, nil
 }
