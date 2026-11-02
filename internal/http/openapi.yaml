@@ -587,6 +587,126 @@ paths:
       responses:
         "204":
           description: Removed (or already absent)
+  /v1/items/{id}/subtitles:
+    get:
+      summary: An item's sidecar subtitles, and the fonts its styled ones are drawn with
+      description: >-
+        The subtitles of the file the item plays, each at its URL. Every
+        client plays an entry's url, in the format format names (a SubRip
+        file is served as WebVTT, and listed so). A subtitle whose package
+        keeps its styled original (an ASS or an SSA script) offers it beside
+        that in styled, for a player that draws styles (a libass renderer);
+        fonts are then the fonts of the package the script asks for by
+        name, each at its URL. A title without them is listed as before:
+        no styled field, no fonts field.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+      responses:
+        "200":
+          description: The subtitles; an empty list when the item has none
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [subtitles]
+                properties:
+                  subtitles:
+                    type: array
+                    items: { $ref: "#/components/schemas/SidecarSubtitle" }
+                  fonts:
+                    type: array
+                    description: >-
+                      The fonts of the package the item plays, in their
+                      order. Omitted when the package carries none.
+                    items: { $ref: "#/components/schemas/Font" }
+              example:
+                subtitles:
+                  - id: 3c1f5a2e-7b9d-4e0a-8c61-2f4b6d8e0a13
+                    lang: en
+                    label: English
+                    format: webvtt
+                    default: true
+                    url: /api/v1/play/subs/3c1f5a2e-7b9d-4e0a-8c61-2f4b6d8e0a13.vtt
+                    styled:
+                      url: /api/v1/play/subs/3c1f5a2e-7b9d-4e0a-8c61-2f4b6d8e0a13.ass
+                      format: ass
+                fonts:
+                  - id: 9b0e4c7a-1d2f-5e3a-8b4c-6d7e8f9a0b1c
+                    format: ttf
+                    names: [Example Sans, Example Sans Regular, ExampleSans-Regular]
+                    url: /api/v1/play/fonts/9b0e4c7a-1d2f-5e3a-8b4c-6d7e8f9a0b1c.ttf
+        "404":
+          description: No such item, or one the viewer's rating cap leaves out
+        "502":
+          description: katalog-api did not answer
+  /v1/play/subs/{id}.vtt:
+    get:
+      summary: A sidecar subtitle's file, at the url of its entry (ranges accepted)
+      security: [{ bearerAuth: [] }, { streamToken: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The file, in the format its entry names (a SubRip file as WebVTT)
+          content:
+            text/vtt:
+              schema: { type: string }
+        "404":
+          description: No such subtitle, or one of a title the viewer's rating cap leaves out
+  /v1/play/subs/{id}.ass:
+    get:
+      summary: A subtitle's styled original, its ASS or SSA script, at the url of its styled
+      description: >-
+        The script as the package keeps it, byte for byte, for a player that
+        draws styles; the fonts it names are the subtitles list's fonts.
+      security: [{ bearerAuth: [] }, { streamToken: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The script
+          content:
+            text/x-ssa:
+              schema: { type: string }
+        "404":
+          description: >-
+            No such subtitle, one without a styled original, or one of a title
+            the viewer's rating cap leaves out
+  /v1/play/fonts/{id}.{ext}:
+    get:
+      summary: A font of the package an item plays, at the url of its entry
+      description: >-
+        Its MIME is its format's (font/ttf, font/otf, font/collection,
+        font/woff, font/woff2; application/octet-stream for a font of none
+        of them); the extension is the format, bin for none. Cached for a
+        day, then revalidated (ETag).
+      security: [{ bearerAuth: [] }, { streamToken: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: ext
+          required: true
+          schema: { type: string, enum: [ttf, otf, ttc, woff, woff2, bin] }
+      responses:
+        "200":
+          description: The font file
+          content:
+            font/ttf:
+              schema: { type: string, format: binary }
+        "304":
+          description: Unchanged since the ETag sent in If-None-Match
+        "404":
+          description: No such font, or one of a title the viewer's rating cap leaves out
   /v1/subtitles/languages:
     get:
       summary: The instance's subtitle languages
@@ -1439,6 +1559,52 @@ components:
             matched: { type: boolean, description: "the series matched the query by its own title too" }
             poster_url: { type: string }
         watched_at: { type: string, format: date-time }
+    SidecarSubtitle:
+      type: object
+      required: [id, lang, url]
+      description: A subtitle of the file an item plays, as the subtitles list gives it.
+      properties:
+        id: { type: string }
+        lang: { type: string, example: en }
+        label: { type: string }
+        format:
+          type: string
+          description: The format url serves (webvtt for a SubRip file; pgs, vobsub, dvb for a bitmap one).
+          example: webvtt
+        default: { type: boolean }
+        forced:
+          type: boolean
+          description: A subtitle a player shows by itself for the language it is in.
+        url:
+          type: string
+          description: Where every client plays it from.
+        styled:
+          type: object
+          required: [url, format]
+          description: >-
+            Its styled original, which its package keeps beside it, for a
+            player that draws styles: omitted for a subtitle without one.
+          properties:
+            url: { type: string, description: "The script: /api/v1/play/subs/{id}.ass" }
+            format: { type: string, enum: [ass], description: An ASS or an SSA script }
+    Font:
+      type: object
+      required: [id, names, url]
+      description: A font of the package an item plays, which its styled subtitles are drawn with.
+      properties:
+        id: { type: string }
+        format:
+          type: string
+          enum: [ttf, otf, ttc, woff, woff2]
+          description: The format its bytes are; omitted for a font of none of them.
+        names:
+          type: array
+          items: { type: string }
+          description: >-
+            The names a style or an override tag asks for it by (its family,
+            full and PostScript names); a libass renderer looks a font up by
+            them, case-insensitively. Empty when none could be read.
+        url: { type: string, description: "/api/v1/play/fonts/{id}.{ext}" }
     Trailer:
       type: object
       required: [url]

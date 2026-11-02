@@ -38,6 +38,9 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `POST /api/v1/me/available` | bearer JWT | which of the titles a client keeps the viewer may watch now, in one request ([below](#downloads)) |
 | `GET /api/v1/me/watchlists` | bearer JWT | named watchlists |
 | `GET/POST /api/v1/items/{id}/progress` | bearer JWT | playback progress, a file's ([below](#one-file-several-episodes)); the resume point, none for a finished title ([below](#finished-titles)); a late position never over a newer one ([below](#downloads)) |
+| `GET /api/v1/items/{id}/subtitles` | bearer JWT | an item's sidecar subtitles at their URLs, a styled one's script beside it, and the fonts of its package ([below](#styled-subtitles)) |
+| `GET /api/v1/play/subs/{id}.vtt` · `.ass` | bearer JWT or stream token | a subtitle's file; its styled original (ASS or SSA) |
+| `GET /api/v1/play/fonts/{id}.{ext}` | bearer JWT or stream token | a font of the package, for a player that draws styled subtitles |
 | `GET /api/v1/subtitles/languages` | bearer JWT | the instance's subtitle languages, from katalog-manager, kept 5 minutes ([below](#subtitle-languages)) |
 | `POST /api/v1/play/events` | bearer JWT or stream token | playback telemetry (the stream token for `sendBeacon`) |
 | `GET /api/v1/events` | bearer JWT or stream token | live catalog notifications (SSE) |
@@ -87,7 +90,8 @@ it too.
 
 Every route of one title (detail, segments, more like this, subtitles, a
 series' episodes and next episode, artwork, playback, trickplay, a sidecar
-subtitle by the title it belongs to, and the viewer's own progress, watched,
+subtitle, its styled original and a package's font by the title they belong
+to, and the viewer's own progress, watched,
 watchlist and like of the title) answers a capped viewer 404 "not found" for a
 title its cap does not allow, and for an id that names none, before anything
 goes upstream: it asks katalog-api's `GET /api/v1/visible`, kept for 30
@@ -186,6 +190,40 @@ and they answer a preflight (GET, the `Range` header) without a credential.
 Their credential is in the URL, never a cookie, so this lets no other site use
 a viewer's session. The routes that take a bearer in a header send no CORS
 headers, and chino-api passes no upstream's `Access-Control-*` headers on.
+
+### Styled subtitles
+
+`GET /api/v1/items/{id}/subtitles` lists the subtitles of the file an item
+plays, each at its `url` in the `format` it serves, which every client plays.
+A styled subtitle (an ASS or an SSA script) is packaged as WebVTT like every
+other, and its package keeps the script as it was beside it, with the fonts
+the original carried. A player that draws styles (a libass renderer such as
+JASSUB on the web) opts into them; every other client reads the list as
+before.
+
+- An entry whose package keeps its styled original offers it in `styled`:
+  `{"url": "/api/v1/play/subs/<id>.ass", "format": "ass"}`.
+- `fonts` are the fonts of the package, in their order, each its `id`, its
+  `format` (`ttf`, `otf`, `ttc`, `woff`, `woff2`; omitted for none of them),
+  the `names` the script asks for it by, and its `url`,
+  `/api/v1/play/fonts/<id>.<format>` (`.bin` for a font of no format). A
+  JASSUB player hands them on as `availableFonts`, each name lower-cased.
+- Both fields are omitted where there is nothing to offer, so a title without
+  them is listed byte for byte as before. The item (`GET /api/v1/items/{id}`)
+  says a subtitle's `styled_format` as katalog-api does, and has no fonts.
+- The script and the fonts are proxied to chino-stream in the stream-token
+  group, as a subtitle's `.vtt` is, and a capped viewer is held to the title
+  each belongs to. A font is cached for a day, then revalidated by its ETag.
+
+```json
+{"subtitles": [
+  {"id": "3c1f…", "lang": "en", "label": "English", "format": "webvtt", "default": true,
+   "url": "/api/v1/play/subs/3c1f….vtt",
+   "styled": {"url": "/api/v1/play/subs/3c1f….ass", "format": "ass"}}],
+ "fonts": [
+  {"id": "9b0e…", "format": "ttf", "names": ["Example Sans", "Example Sans Regular", "ExampleSans-Regular"],
+   "url": "/api/v1/play/fonts/9b0e….ttf"}]}
+```
 
 ### Subtitle languages
 
