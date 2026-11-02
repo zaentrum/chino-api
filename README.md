@@ -55,6 +55,7 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `POST /api/v1/items/{id}/play/prewarm` | bearer JWT or stream token | warm the variant the client starts on |
 | `GET /api/v1/items/{id}/play/{vN\|aN\|sN}/playlist.m3u8` | bearer JWT or stream token | packaged video / audio / WebVTT rendition, its segments next to it |
 | `GET /api/v1/items/{id}/extras/{extraId}/play/master.m3u8` | bearer JWT or stream token | an extra's HLS master, its `play_path` ([below](#extras)) |
+| `GET /api/v1/items/{id}/extras/{extraId}/play/info` | bearer JWT or stream token | how an extra plays for the client's `caps`, as a title's `/play/info` |
 | `GET /api/v1/items/{id}/extras/{extraId}/play/{vN\|aN\|sN}/playlist.m3u8` | bearer JWT or stream token | an extra's renditions, as a packaged title's |
 
 ### Search
@@ -181,7 +182,11 @@ decodes and the subtitle group the package has; `q=<name>` from `/play/info`'s
 `qualities` serves one rung, `auto` (the default) the ladder. The rules and the
 `/play/info` shape are in chino-stream's README and in the spec (`PlayInfo`,
 `PlayQuality`). A quality menu shows `qualities` when it has two or more
-entries, by `label`, and reloads the master with `q=<name>`.
+entries, by `label`, and reloads the master with `q=<name>`. `pictureArea`
+(`PictureArea`) says where the picture is in a frame that keeps black bars
+in it - `left`, `top`, `width` and `height`, fractions of the frame served -
+for a player that fits the picture to the screen; it is left out where
+there is none to say.
 
 A web player on another origin, a Cast receiver among them, plays from the
 routes that take a stream token (playlists, segments, subtitles, artwork,
@@ -330,9 +335,13 @@ streaming - come with its detail, `GET /api/v1/items/{id}`, beside
   under the extra's own routes. Its routes are in the spec.
 - The routes of a title's extras hold a capped viewer to the title's rating:
   the 404 of the title there too.
-- An extra has no progress, watched, segments, trickplay, `/play/info` or
-  `/play/prewarm`: a player of extras sends none of them, and Continue
-  Watching is not touched.
+- Its `/play/info` (`/api/v1/items/{id}/extras/{extraId}/play/info`, the
+  same query) is chino-stream's of the extra, as a title's is: how it plays
+  for the client's `caps` and `q`, packaged or on the fly, and its own
+  `pictureArea`.
+- An extra has no progress, watched, segments, trickplay or `/play/prewarm`:
+  a player of extras sends none of them, and Continue Watching is not
+  touched.
 - When an extra is packaged, `GET /api/v1/events` sends its title a note,
   phase `extra.packaged`, and the detail lists it on the next fetch. The
   extras' topic (`<prefix>catalog.extra.packaged`) is tailed by a consumer
