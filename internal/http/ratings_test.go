@@ -105,10 +105,12 @@ func TestTheStreamTokenCarriesTheBearersCap(t *testing.T) {
 }
 
 // ratedAges are the titles of the rated catalog, by the age a viewer must be
-// (-1: unrated), and the title of each sidecar subtitle.
+// (-1: unrated), and the title of each sidecar subtitle and of each font of a
+// package.
 var (
 	ratedAges     = map[string]int{"kid": 6, "adult": 16, "unrated": -1, "show6": 6, "ep6": 6, "show16": 16, "ep16": 16}
 	ratedSubtitle = map[string]string{"sub-kid": "kid", "sub-adult": "adult"}
+	ratedFont     = map[string]string{"font-kid": "kid", "font-adult": "adult"}
 )
 
 // allowedAt is whether a viewer at the cap of r's max_rating parameter may be
@@ -196,6 +198,12 @@ func ratedKatalog(t *testing.T) *recorder {
 				return
 			}
 			http.NotFound(w, r)
+		case len(parts) == 3 && parts[0] == "fonts" && parts[2] == "asset":
+			if it, ok := ratedFont[parts[1]]; ok {
+				_, _ = io.WriteString(w, `{"itemId":"`+it+`","path":"/subs/fonts/`+parts[1]+`.ttf","format":"ttf"}`)
+				return
+			}
+			http.NotFound(w, r)
 		case len(parts) >= 2 && (parts[0] == "items" || parts[0] == "series") && !allowedAt(r, parts[1]):
 			http.Error(w, "not found", http.StatusNotFound)
 		case len(parts) == 3 && parts[0] == "series" && parts[2] == "episodes":
@@ -236,8 +244,9 @@ func ratedRouter(t *testing.T, is *issuer) (h http.Handler, katalog, stream, man
 }
 
 // titleRoutes are the routes of one title chino-api serves, as the router
-// holds them: every route a title id names ({id}, {itemId}), and a sidecar
-// subtitle's; a person's routes ({id} names a person) are none of them.
+// holds them: every route a title id names ({id}, {itemId}), a sidecar
+// subtitle's (its .vtt and its styled original's .ass) and a package's
+// font's; a person's routes ({id} names a person) are none of them.
 func titleRoutes(t *testing.T, h http.Handler) [][2]string {
 	t.Helper()
 	var out [][2]string
@@ -270,6 +279,9 @@ func pathOf(route, title string) string {
 		case "id", "itemId":
 			if strings.HasPrefix(route, "/api/v1/play/subs/") {
 				return "sub-" + title
+			}
+			if strings.HasPrefix(route, "/api/v1/play/fonts/") {
+				return "font-" + title
 			}
 			return title
 		case "rendId":
@@ -315,7 +327,8 @@ func TestEveryRouteOfOneTitleIs404ForATitleAboveTheCap(t *testing.T) {
 	upstream := func() []string { return append(append(stream.take(), manager.take()...), katalog.take()...) }
 	asked := func(reqs []string) (others []string) {
 		for _, r := range reqs {
-			if !strings.Contains(r, "/api/v1/visible?") && !strings.Contains(r, "/api/v1/subtitles/") {
+			if !strings.Contains(r, "/api/v1/visible?") && !strings.Contains(r, "/api/v1/subtitles/") &&
+				!strings.Contains(r, "/api/v1/fonts/") {
 				others = append(others, r)
 			}
 		}
@@ -385,7 +398,8 @@ func TestACapWithoutAnAnswerServesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/api/v1/items/kid/play/master.m3u8", "/api/v1/items/kid/poster", "/api/v1/play/subs/sub-kid.vtt"} {
+	for _, path := range []string{"/api/v1/items/kid/play/master.m3u8", "/api/v1/items/kid/poster", "/api/v1/play/subs/sub-kid.vtt",
+		"/api/v1/play/subs/sub-kid.ass", "/api/v1/play/fonts/font-kid.ttf"} {
 		if w := do(h, "GET", path, bearerWith(t, is, "kid-1", 12)); w.Code != http.StatusBadGateway {
 			t.Errorf("%s with katalog-api down: %d %q, want 502", path, w.Code, w.Body)
 		}

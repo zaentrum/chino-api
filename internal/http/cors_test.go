@@ -46,6 +46,8 @@ func TestMediaRoutesAreOpenToOtherOrigins(t *testing.T) {
 		"/api/v1/items/i1/play/s0/seg-00001.vtt",
 		"/api/v1/items/i1/play/subtitles/2.vtt",
 		"/api/v1/play/subs/sub1.vtt",
+		"/api/v1/play/subs/sub1.ass",
+		"/api/v1/play/fonts/f1.ttf",
 		"/api/v1/items/i1/extras/" + testExtra + "/play/master.m3u8",
 	} {
 		w := do(h, "GET", path+"?stream="+tok, origin)
@@ -67,6 +69,8 @@ func TestMediaRoutesAreOpenToOtherOrigins(t *testing.T) {
 		"/api/v1/items/i1/poster",
 		"/api/v1/people/p1/profile",
 		"/api/v1/play/subs/sub1.vtt",
+		"/api/v1/play/subs/sub1.ass",
+		"/api/v1/play/fonts/f1.woff2",
 		"/api/v1/items/i1/extras/" + testExtra + "/play/v0/seg-00001.m4s",
 	} {
 		w := do(h, "OPTIONS", path, preflight)

@@ -48,15 +48,29 @@ func (g gate) title(param string) func(http.Handler) http.Handler {
 // parameter id): a capped viewer is answered 404 for a subtitle of a title
 // its cap does not allow, and for one there is not.
 func (g gate) subtitle(next http.Handler) http.Handler {
+	return g.owned(next, "subtitle", g.kc.SubtitleItem)
+}
+
+// font is middleware for a route of one font of a package (the URL parameter
+// id), as subtitle is for a subtitle's: a capped viewer is answered 404 for a
+// font of a title its cap does not allow, and for one there is not.
+func (g gate) font(next http.Handler) http.Handler {
+	return g.owned(next, "font", g.kc.FontItem)
+}
+
+// owned holds a capped viewer's request for one asset of a title (the URL
+// parameter id) to what its cap allows, the asset's title as titleOf says
+// it.
+func (g gate) owned(next http.Handler, what string, titleOf func(context.Context, string) (string, error)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		age, capped := auth.MaxRatingFromContext(r.Context())
 		if !capped {
 			next.ServeHTTP(w, r)
 			return
 		}
-		item, err := g.kc.SubtitleItem(r.Context(), chi.URLParam(r, "id"))
+		item, err := titleOf(r.Context(), chi.URLParam(r, "id"))
 		if err != nil {
-			log.Printf("chino-api: the title of a subtitle could not be looked up: %v", err)
+			log.Printf("chino-api: the title of a %s could not be looked up: %v", what, err)
 			http.Error(w, "catalog unavailable", http.StatusBadGateway)
 			return
 		}

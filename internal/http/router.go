@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -340,6 +341,15 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// then mounts them as <track src>. Stream-token auth so the
 			// browser's <track> requests work without OIDC headers.
 			r.With(g.subtitle).Get("/play/subs/{id}.vtt", proxySidecarSubtitle(streamKC))
+			// A subtitle's styled original (its ASS or SSA script) and the
+			// fonts of its package, which the subtitles list offers a
+			// player that draws styles (a libass renderer) beside the .vtt:
+			// held to a capped viewer's cap by the title they belong to, as
+			// a subtitle is.
+			r.With(g.subtitle).Get("/play/subs/{id}.ass", proxyStyledSubtitle(streamKC))
+			for _, ext := range fontExtensions {
+				r.With(g.font).Get("/play/fonts/{id}."+ext, proxyFont(streamKC, ext))
+			}
 		})
 	})
 
@@ -510,7 +520,17 @@ func subtitlesList(kc *katalog.Client) http.HandlerFunc {
 		for _, s := range it.Subtitles {
 			subs = append(subs, sidecarEntry(s))
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"subtitles": subs})
+		out := map[string]any{"subtitles": subs}
+		// The fonts the styled originals are drawn with: only where the
+		// package carries some, so a title without them is listed as before.
+		if len(it.Fonts) > 0 {
+			fonts := make([]katalog.Font, 0, len(it.Fonts))
+			for _, f := range it.Fonts {
+				fonts = append(fonts, fontEntry(f))
+			}
+			out["fonts"] = fonts
+		}
+		writeJSON(w, http.StatusOK, out)
 	}
 }
 
@@ -523,7 +543,54 @@ func sidecarEntry(s katalog.Subtitle) katalog.Subtitle {
 	if strings.EqualFold(s.Format, "srt") {
 		s.Format = "webvtt"
 	}
+	// A styled original is offered beside it, at its .ass URL, in a format
+	// chino-stream serves; the entry itself is as before.
+	if styledFormats[s.StyledFormat] {
+		s.Styled = &katalog.StyledSubtitle{URL: "/api/v1/play/subs/" + s.ID + ".ass", Format: s.StyledFormat}
+	}
+	s.StyledFormat = ""
 	return s
+}
+
+// styledFormats are the formats of a styled original chino-stream serves:
+// an ASS or an SSA script.
+var styledFormats = map[string]bool{"ass": true}
+
+// fontExtensions are the extensions of a font's URL: its format, bin for a
+// font of none of them. chino-stream serves each by the catalog's format.
+var fontExtensions = []string{"ttf", "otf", "ttc", "woff", "woff2", "bin"}
+
+// fontEntry is a font as the subtitles list gives it: with its URL, whose
+// extension is its format.
+func fontEntry(f katalog.Font) katalog.Font {
+	ext := "bin"
+	if slices.Contains(fontExtensions, f.Format) {
+		ext = f.Format
+	}
+	f.URL = "/api/v1/play/fonts/" + f.ID + "." + ext
+	if f.Names == nil {
+		f.Names = []string{}
+	}
+	return f
+}
+
+// proxyStyledSubtitle forwards GET /api/v1/play/subs/{id}.ass to
+// chino-stream, which serves the subtitle's styled original from the
+// package; in the stream-token group, as the .vtt is.
+func proxyStyledSubtitle(kc *katalog.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		kc.ProxyStream(w, r, "/api/play/subs/"+id+".ass", bearerFrom(r))
+	}
+}
+
+// proxyFont forwards GET /api/v1/play/fonts/{id}.{ext} to chino-stream,
+// which serves the package's font file.
+func proxyFont(kc *katalog.Client, ext string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		kc.ProxyStream(w, r, "/api/play/fonts/"+id+"."+ext, bearerFrom(r))
+	}
 }
 
 // proxySidecarSubtitle forwards GET /api/v1/play/subs/{id}.vtt to
