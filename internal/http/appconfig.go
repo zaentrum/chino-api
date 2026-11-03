@@ -37,10 +37,15 @@ func appConfig(cfg config.Config) http.HandlerFunc {
 			// (it answers 503 when this is false). downloads: a phone may
 			// keep a packaged title to play without a connection
 			// (DOWNLOADS_ENABLED); a client offers no download while it is
-			// false.
+			// false. preferences: /api/v1/me/preferences keeps a person's
+			// settings, which takes a database. watchlist_kinds: a list can be
+			// asked for by kind (?kind=) and its counts by kind
+			// (?include=counts).
 			"features": map[string]bool{
-				"feedback":  feedbackEnabled(cfg),
-				"downloads": cfg.DownloadsEnabled,
+				"feedback":        feedbackEnabled(cfg),
+				"downloads":       cfg.DownloadsEnabled,
+				"preferences":     keepsLists(cfg),
+				"watchlist_kinds": keepsLists(cfg),
 			},
 		})
 	}
@@ -52,6 +57,12 @@ func appConfig(cfg config.Config) http.HandlerFunc {
 // refuses.
 func feedbackEnabled(cfg config.Config) bool {
 	return strings.TrimSpace(cfg.OpenProjectToken) != ""
+}
+
+// keepsLists says whether this server has the database a person's lists and
+// settings are kept in.
+func keepsLists(cfg config.Config) bool {
+	return strings.TrimSpace(cfg.PgURL) != ""
 }
 
 // publicAPIBase reports the external "<origin>/api" this server is reached

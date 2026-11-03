@@ -45,6 +45,7 @@ type answers struct {
 	subtitle map[string]answer // subtitle id -> its title's id (answer.item)
 	font     map[string]answer // font id -> its title's id (answer.item)
 	file     map[string]answer // "<cap>|<id>" -> the episodes of its file (answer.items, files.go)
+	kind     map[string]answer // title id -> its kind (answer.item, kinds.go)
 }
 
 type answer struct {

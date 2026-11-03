@@ -61,3 +61,26 @@ func TestAppConfigReportsWhetherDownloadsAreOn(t *testing.T) {
 		}
 	}
 }
+
+// features.preferences and features.watchlist_kinds are on with the database
+// they keep their data in, and off without one.
+func TestAppConfigReportsWhatADatabaseOffers(t *testing.T) {
+	for _, c := range []struct {
+		url  string
+		want bool
+	}{{"", false}, {" ", false}, {"postgres://db/chino", true}} {
+		rec := httptest.NewRecorder()
+		appConfig(config.Config{PgURL: c.url})(rec, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+		var doc struct {
+			Features map[string]bool `json:"features"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"preferences", "watchlist_kinds"} {
+			if got, ok := doc.Features[name]; !ok || got != c.want {
+				t.Errorf("PgURL %q: features.%s = %v (present %v), want %v", c.url, name, got, ok, c.want)
+			}
+		}
+	}
+}
