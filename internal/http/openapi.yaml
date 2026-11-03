@@ -598,7 +598,8 @@ paths:
         that in styled, for a player that draws styles (a libass renderer);
         fonts are then the fonts of the package the script asks for by
         name, each at its URL. A title without them is listed as before:
-        no styled field, no fonts field.
+        no styled field, no fonts field — nor fonts when none of its
+        subtitles offers a styled original.
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: "#/components/parameters/ItemID"
@@ -618,7 +619,8 @@ paths:
                     type: array
                     description: >-
                       The fonts of the package the item plays, in their
-                      order. Omitted when the package carries none.
+                      order. Omitted when the package carries none, and when
+                      no subtitle of the list has styled.
                     items: { $ref: "#/components/schemas/Font" }
               example:
                 subtitles:
@@ -636,6 +638,8 @@ paths:
                     format: ttf
                     names: [Example Sans, Example Sans Regular, ExampleSans-Regular]
                     url: /api/v1/play/fonts/9b0e4c7a-1d2f-5e3a-8b4c-6d7e8f9a0b1c.ttf
+        "401":
+          description: No bearer, or one that is not valid (a stream token is not taken)
         "404":
           description: No such item, or one the viewer's rating cap leaves out
         "502":
@@ -651,18 +655,32 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: The file, in the format its entry names (a SubRip file as WebVTT)
+          description: >-
+            The file, in the format its entry names: WebVTT (a SubRip file
+            converted), or a bitmap subtitle's own container
           content:
             text/vtt:
               schema: { type: string }
+            application/pgs:
+              schema: { type: string, format: binary }
+            application/x-vobsub:
+              schema: { type: string, format: binary }
+            application/dvb-subtitles:
+              schema: { type: string, format: binary }
+        "401":
+          description: No credential, or one that is not valid
         "404":
           description: No such subtitle, or one of a title the viewer's rating cap leaves out
+        "502":
+          description: The catalog or chino-stream did not answer
   /v1/play/subs/{id}.ass:
     get:
       summary: A subtitle's styled original, its ASS or SSA script, at the url of its styled
       description: >-
         The script as the package keeps it, byte for byte, for a player that
         draws styles; the fonts it names are the subtitles list's fonts.
+        Cached by the browser alone (private), for good: a subtitle's id is
+        new with every package.
       security: [{ bearerAuth: [] }, { streamToken: [] }]
       parameters:
         - in: path
@@ -675,18 +693,22 @@ paths:
           content:
             text/x-ssa:
               schema: { type: string }
+        "401":
+          description: No credential, or one that is not valid
         "404":
           description: >-
             No such subtitle, one without a styled original, or one of a title
             the viewer's rating cap leaves out
+        "502":
+          description: The catalog or chino-stream did not answer
   /v1/play/fonts/{id}.{ext}:
     get:
       summary: A font of the package an item plays, at the url of its entry
       description: >-
         Its MIME is its format's (font/ttf, font/otf, font/collection,
         font/woff, font/woff2; application/octet-stream for a font of none
-        of them); the extension is the format, bin for none. Cached for a
-        day, then revalidated (ETag).
+        of them); the extension is the format, bin for none. Cached by the
+        browser alone (private) for a day, then revalidated (ETag).
       security: [{ bearerAuth: [] }, { streamToken: [] }]
       parameters:
         - in: path
@@ -703,10 +725,24 @@ paths:
           content:
             font/ttf:
               schema: { type: string, format: binary }
+            font/otf:
+              schema: { type: string, format: binary }
+            font/collection:
+              schema: { type: string, format: binary }
+            font/woff:
+              schema: { type: string, format: binary }
+            font/woff2:
+              schema: { type: string, format: binary }
+            application/octet-stream:
+              schema: { type: string, format: binary }
         "304":
           description: Unchanged since the ETag sent in If-None-Match
+        "401":
+          description: No credential, or one that is not valid
         "404":
           description: No such font, or one of a title the viewer's rating cap leaves out
+        "502":
+          description: The catalog or chino-stream did not answer
   /v1/subtitles/languages:
     get:
       summary: The instance's subtitle languages
@@ -1519,6 +1555,12 @@ components:
             at most 20 actors and 10 people of every other role.
           type: array
           items: { $ref: "#/components/schemas/CastEntry" }
+        subtitles:
+          description: >
+            The sidecar subtitles of the file the item plays, as the catalog
+            lists them, without their URLs (the subtitles list has those).
+          type: array
+          items: { $ref: "#/components/schemas/ItemSubtitle" }
         trailers:
           description: >
             The title's links to online videos, as the catalog has them: each
@@ -1559,6 +1601,24 @@ components:
             matched: { type: boolean, description: "the series matched the query by its own title too" }
             poster_url: { type: string }
         watched_at: { type: string, format: date-time }
+    ItemSubtitle:
+      type: object
+      required: [id, lang]
+      description: A subtitle of the file an item plays, as the item lists it.
+      properties:
+        id: { type: string }
+        lang: { type: string, example: en }
+        label: { type: string }
+        format: { type: string, example: webvtt }
+        default: { type: boolean }
+        forced: { type: boolean }
+        styled_format:
+          type: string
+          enum: [ass]
+          description: >-
+            The format of the styled original its package keeps beside its
+            file; omitted for a subtitle without one. The subtitles list
+            offers it in styled.
     SidecarSubtitle:
       type: object
       required: [id, lang, url]

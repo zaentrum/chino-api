@@ -208,12 +208,16 @@ before.
   the `names` the script asks for it by, and its `url`,
   `/api/v1/play/fonts/<id>.<format>` (`.bin` for a font of no format). A
   JASSUB player hands them on as `availableFonts`, each name lower-cased.
-- Both fields are omitted where there is nothing to offer, so a title without
-  them is listed byte for byte as before. The item (`GET /api/v1/items/{id}`)
-  says a subtitle's `styled_format` as katalog-api does, and has no fonts.
+- Both fields are omitted where there is nothing to offer — `fonts` also
+  when no subtitle of the list offers `styled`, the fonts being for those
+  alone — so a title without them is listed byte for byte as before. The
+  item (`GET /api/v1/items/{id}`) says a subtitle's `styled_format` as
+  katalog-api does, and has no fonts.
 - The script and the fonts are proxied to chino-stream in the stream-token
   group, as a subtitle's `.vtt` is, and a capped viewer is held to the title
-  each belongs to. A font is cached for a day, then revalidated by its ETag.
+  each belongs to. chino-stream serves each from its title's package alone,
+  cached by the browser alone (`private`) — a script for good, a font for a
+  day, then revalidated by its ETag — and never sniffed (`nosniff`).
 
 ```json
 {"subtitles": [
