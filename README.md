@@ -36,7 +36,9 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `GET /api/v1/people/{id}/profile` | bearer JWT or stream token | a person's portrait (`profile_url`) |
 | `GET /api/v1/me/continue-watching` | bearer JWT | resume list |
 | `POST /api/v1/me/available` | bearer JWT | which of the titles a client keeps the viewer may watch now, in one request ([below](#downloads)) |
-| `GET /api/v1/me/watchlists` | bearer JWT | named watchlists |
+| `GET /api/v1/me/watchlists` | bearer JWT | named watchlists; `?include=counts` adds each one's titles by row |
+| `GET /api/v1/me/watchlists/{id}` | bearer JWT | a list's ids; `?kind=movie` or `?kind=series` for one row's |
+| `GET/PATCH /api/v1/me/preferences` | bearer JWT | what a person has set for their account |
 | `GET/POST /api/v1/items/{id}/progress` | bearer JWT | playback progress, a file's ([below](#one-file-several-episodes)); the resume point, none for a finished title ([below](#finished-titles)); a late position never over a newer one ([below](#downloads)) |
 | `GET /api/v1/items/{id}/subtitles` | bearer JWT | an item's sidecar subtitles at their URLs, a styled one's script beside it, and the fonts of its package ([below](#styled-subtitles)) |
 | `GET /api/v1/play/subs/{id}.vtt` · `.ass` | bearer JWT or stream token | a subtitle's file; its styled original (ASS or SSA) |
@@ -114,7 +116,7 @@ app that makes accounts to offer it — with `DELETE /api/v1/me` and their
 bearer, in the `Authorization` header (a `?token=` bearer is refused: a link
 someone could be sent). chino-api deletes what it keeps of them — playback
 progress, watch history, named watchlists and their items, likes, the legacy
-watchlist rows — and asks portal-api, with the person's bearer and the
+watchlist rows, their preferences — and asks portal-api, with the person's bearer and the
 account deletion token (`ACCOUNT_DELETION_TOKEN`, sent as
 `X-Account-Deletion-Token`), to delete their account in the platform's realm
 (`DELETE /api/portal/me`). The rows are deleted in a transaction committed
@@ -476,6 +478,15 @@ title kept on a phone to play without a connection: `true` unless
 `DOWNLOADS_ENABLED` is `false` (or `0`, `no`, `off`). A download is fetched from
 the playback routes, as a stream is, so the switch changes nothing else on the
 server; a client offers no download while it is `false`.
+
+`features.preferences` says `/api/v1/me/preferences` keeps a person's settings,
+and `features.watchlist_kinds` that a list can be asked for by kind: both `true`
+with a database (`PG_URL`). A list holds only ids and the catalog says a title's
+kind only on its item route, so chino-api asks it once per title, 8 at a time,
+and keeps the answer for a day. `movie` is one row, and `series` the other, with
+episodes and every other kind. A title the catalog cannot answer for fails the
+answer with 502, never leaving the title out; an id of no title is in neither
+row, so a list's counts can add up to less than its `itemCount`.
 
 ## Configuration
 
