@@ -521,9 +521,9 @@ func subtitlesList(kc *katalog.Client) http.HandlerFunc {
 			subs = append(subs, sidecarEntry(s))
 		}
 		out := map[string]any{"subtitles": subs}
-		// The fonts the styled originals are drawn with: only where the
-		// package carries some, so a title without them is listed as before.
-		if len(it.Fonts) > 0 {
+		// The fonts the styled originals are drawn with: only beside one, so
+		// a title without them is listed as before.
+		if len(it.Fonts) > 0 && slices.ContainsFunc(subs, func(s katalog.Subtitle) bool { return s.Styled != nil }) {
 			fonts := make([]katalog.Font, 0, len(it.Fonts))
 			for _, f := range it.Fonts {
 				fonts = append(fonts, fontEntry(f))

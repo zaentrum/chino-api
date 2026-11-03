@@ -76,9 +76,10 @@ func TestAFontIsListedAtItsURL(t *testing.T) {
 
 // The subtitles list of a title whose package keeps styled originals offers
 // each beside its subtitle, and the package's fonts in their order, each at
-// its URL with its names; a title without fonts is listed as before, with
-// no fonts field. The item itself says a subtitle's styled format as
-// katalog-api does, and sends no fonts.
+// its URL with its names; a title without fonts, or none of whose subtitles
+// is offered a styled original, is listed as before, with no fonts field.
+// The item itself says a subtitle's styled format as katalog-api does, and
+// sends no fonts.
 func TestTheSubtitlesListOffersTheStyledOriginalsAndTheFonts(t *testing.T) {
 	kat := newFake(t, map[string]string{
 		"/api/v1/items/m1": `{"id":"m1","type":"movie","title":"A Film","subtitles":[
@@ -86,6 +87,9 @@ func TestTheSubtitlesListOffersTheStyledOriginalsAndTheFonts(t *testing.T) {
 			{"id":"s2","lang":"de","format":"webvtt"}],
 			"fonts":[{"id":"f1","format":"ttf","names":["Example Sans","ExampleSans-Regular"]},{"id":"f2","names":[]}]}`,
 		"/api/v1/items/m2": `{"id":"m2","type":"movie","title":"Plain","subtitles":[{"id":"s3","lang":"en","format":"webvtt"}]}`,
+		// fonts of no styled subtitle chino-stream serves
+		"/api/v1/items/m3": `{"id":"m3","type":"movie","title":"Plain Too","subtitles":[
+			{"id":"s4","lang":"en","format":"webvtt","styled_format":"usf"}],"fonts":[{"id":"f3","format":"ttf","names":["Example Sans"]}]}`,
 	})
 	h := router(t, kat.URL, "http://katalog-manager.invalid", false)
 
@@ -106,6 +110,10 @@ func TestTheSubtitlesListOffersTheStyledOriginalsAndTheFonts(t *testing.T) {
 	if w := do(h, "GET", "/api/v1/items/m2/subtitles", nil); w.Code != http.StatusOK ||
 		w.Body.String() != `{"subtitles":[{"id":"s3","lang":"en","format":"webvtt","url":"/api/v1/play/subs/s3.vtt"}]}`+"\n" {
 		t.Errorf("a title without fonts: %d %s", w.Code, w.Body)
+	}
+	if w := do(h, "GET", "/api/v1/items/m3/subtitles", nil); w.Code != http.StatusOK ||
+		w.Body.String() != `{"subtitles":[{"id":"s4","lang":"en","format":"webvtt","url":"/api/v1/play/subs/s4.vtt"}]}`+"\n" {
+		t.Errorf("a title whose fonts are of no styled subtitle offered: %d %s", w.Code, w.Body)
 	}
 	w = do(h, "GET", "/api/v1/items/m1", nil)
 	var detail struct {
