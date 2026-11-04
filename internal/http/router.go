@@ -159,6 +159,9 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// list; memberships hydrates the checkmarks + card "saved"
 			// badge in one round-trip. (memberships is registered before
 			// the {listId} routes so chi matches the static segment.)
+			r.Get("/me/preferences", getPreferences(st))
+			r.Patch("/me/preferences", patchPreferences(st))
+
 			r.Get("/me/watchlists", listWatchlists(st, g))
 			r.Post("/me/watchlists", createWatchlist(st))
 			r.Get("/me/watchlists/memberships", watchlistMemberships(st, g))

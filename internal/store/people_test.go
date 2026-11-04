@@ -66,6 +66,10 @@ func testStore(t *testing.T) *Store {
 func seedUser(t *testing.T, st *Store, userID string) {
 	t.Helper()
 	ctx := context.Background()
+	on := true
+	if _, err := st.PatchPreferences(ctx, userID, PreferencesPatch{WatchlistByKind: &on}); err != nil {
+		t.Fatal(err)
+	}
 	for _, item := range []string{"m1", "m2"} {
 		if _, err := st.p.Exec(ctx, `INSERT INTO playback_progress (user_id, item_id, position_sec, duration_sec) VALUES ($1, $2, 600, 5400)`, userID, item); err != nil {
 			t.Fatal(err)
@@ -134,7 +138,7 @@ func TestDeleteUserData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Deleted{Progress: 2, Watched: 2, Watchlists: 1, WatchlistItems: 2, Likes: 2, LegacyWatchlist: 2}
+	want := Deleted{Progress: 2, Watched: 2, Watchlists: 1, WatchlistItems: 2, Likes: 2, LegacyWatchlist: 2, Preferences: 1}
 	if d.Deleted != want {
 		t.Errorf("counted %+v, want %+v", d.Deleted, want)
 	}
