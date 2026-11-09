@@ -1213,7 +1213,14 @@ paths:
                     description: { type: string }
                     fingerprint:
                       type: string
-                      description: lowercase hex sha-256 of the normalized error signature; omit for manual reports
+                      description: >-
+                        Lowercase hex SHA-256 of the failure's signature: its error name, its
+                        message with UUIDs and digit runs replaced, and its top three stack
+                        frames without query strings or line and column numbers. The same
+                        failure gives the same fingerprint in every session of one client;
+                        clients need not agree with each other. Omit for manual reports. A
+                        fingerprint seen within 14 days is added to its work package (200,
+                        `duplicate: true`).
                     context:
                       type: object
                       additionalProperties: { type: string }

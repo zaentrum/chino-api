@@ -28,7 +28,7 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `GET /api/config` | none | client app config |
 | `GET /api/v1/me` | bearer JWT | echoes the caller's `sub` |
 | `DELETE /api/v1/me` | bearer JWT (in the header) | deletes the signed-in person's data and their account ([below](#deleting-an-account)) |
-| `GET /api/v1/items` | bearer JWT | catalog browse |
+| `GET /api/v1/items` | bearer JWT | catalog browse; with `unwatched=true` (home's rows) it leaves out what the caller has finished and fills the page from the titles after it, four pages at most, so movies and shows, which ask without it, keep a watched title findable |
 | `GET /api/v1/items/{id}` | bearer JWT | item detail, cast and crew by role, its trailers and extras |
 | `GET /api/v1/search` | bearer JWT | one search: films, series and episodes ranked together, and people apart ([below](#search)) |
 | `GET /api/v1/people` | bearer JWT | people search by name |
@@ -259,7 +259,8 @@ Nothing else is in the answer.
 `POST /api/v1/play/events` takes the players' events in batches,
 `{"sessionId": "…", "events": [{"ts": <ms>, "kind": "…", "itemId": "…", "payload": {…}}]}`,
 and keeps none of them: each is a JSON line in the log (`client_ts`, `kind`,
-`itemId`, each payload field as `p_<field>`, credentials `REDACTED`) and is
+`itemId`, `user` (the caller's subject), `sessionId`, each payload field as
+`p_<field>`, credentials `REDACTED`) and is
 counted on `GET /metrics`, the cluster-internal scrape. Every kind counts in
 `chino_player_events_total{kind}`, a kind the server does not know too. A
 payload value is a JSON number or its string, as the TV and mobile apps send
@@ -444,6 +445,20 @@ says whether it may offer them. Two routes serve it.
   connection. The title is watched at `now()` minus the age, or later where
   it was watched again since. Without a body the mark is now's, as before.
 
+### Stream tokens
+
+A stream token is `base64url(subject|expiry).base64url(HMAC-SHA256)`, valid 6
+hours, so a play URL stays the same while the sign-in renews itself. It is
+bound to the person, not to a title, and a capped viewer's `max_rating` rides
+in it, signed with the rest. It opens the media and artwork routes, portraits,
+`/api/v1/events` and `/api/v1/play/events` — the rows marked "or stream token"
+above — and nothing under `/api/v1/me`. chino-api mints and checks it;
+chino-stream and katalog-manager check it with the same key,
+`STREAM_SIGNING_KEY` (base64, at least 16 bytes; on the platform the Secret
+`zaentrum-stream-signing`). A service started without it makes a key of its
+own and logs a warning: its tokens then fail on every other pod and after each
+restart.
+
 ## Local development
 
 ```bash
@@ -464,6 +479,7 @@ URL, `sendBeacon`, an `EventSource`), it authenticates with `?stream=<token>`,
 a stream token from `POST /api/v1/me/stream-token`. The bearer in the URL
 (`?token=`) is deprecated: it is still accepted in this release and goes in
 the next. The request log shows credential values as `REDACTED`.
+
 
 When `PG_URL` is empty, progress and telemetry endpoints answer gracefully but
 do not persist — keeps local dev simple. When `OPENPROJECT_TOKEN` is empty the
@@ -494,7 +510,7 @@ Configured entirely through environment variables (see `internal/config`):
 | `ADMIN_SUBJECTS` | deprecated: comma-separated OIDC `sub` values let through `/api/v1/admin/*` besides the role; empty by default, and it goes in a coming release |
 | `OPENPROJECT_URL` / `OPENPROJECT_TOKEN` / `OPENPROJECT_PROJECT_ID` / `OPENPROJECT_BUG_TYPE_ID` | feedback pipeline (optional) |
 | `DOWNLOADS_ENABLED` | whether `/api/config` lets the apps offer downloads (`features.downloads`; default `true`) |
-| `STREAM_SIGNING_KEY` | shared HMAC secret for signed `?stream=` URLs (optional) |
+| `STREAM_SIGNING_KEY` | shared HMAC secret for signed `?stream=` URLs, base64, at least 16 bytes (optional: unset, a key of this process's own — [stream tokens](#stream-tokens)) |
 | `ACCOUNT_DELETION_TOKEN` | the token chino-api and portal-api delete an account with (Secret `zaentrum-people`, key `deletion-token`, on the platform); empty: `DELETE /api/v1/me` answers 501 |
 | `PORTAL_BASE_URL` | portal-api, for addon slots, notices and account deletion (default `http://portal-api`) |
 
