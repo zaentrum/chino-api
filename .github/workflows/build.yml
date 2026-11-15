@@ -8,6 +8,24 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # The tests of what chino-api keeps (progress, watched, finished titles,
+    # Continue Watching, account deletion, a capped viewer's lists) run against
+    # a real PostgreSQL and skip without one; each makes a schema of its own and
+    # drops it. A throwaway database that trusts every connection, as
+    # katalog-api's workflow has it.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -16,3 +34,5 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
+        env:
+          CHINO_API_TEST_DATABASE_URL: postgres://postgres@localhost:5432/postgres?sslmode=disable
