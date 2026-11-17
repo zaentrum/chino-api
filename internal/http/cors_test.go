@@ -161,3 +161,18 @@ func TestSignedInRoutesStayClosedToOtherOrigins(t *testing.T) {
 		t.Errorf("GET /api/v1/me: %d %v", w.Code, w.Header())
 	}
 }
+
+// An app that is handed a server's address asks /api/healthz first, then
+// /api/config, and one that runs in a page of another origin (a TV app's, a
+// development server's) can read both answers: each allows any origin.
+func TestHealthAndConfigAreOpenToOtherOrigins(t *testing.T) {
+	stream := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(stream.Close)
+	h := streamRouter(t, stream.URL)
+	for _, path := range []string{"/api/healthz", "/api/config"} {
+		w := do(h, "GET", path, http.Header{"Origin": {"https://tv-app.example"}})
+		if got := w.Header().Values("Access-Control-Allow-Origin"); w.Code != http.StatusOK || len(got) != 1 || got[0] != "*" {
+			t.Errorf("GET %s: %d, Access-Control-Allow-Origin %q", path, w.Code, got)
+		}
+	}
+}

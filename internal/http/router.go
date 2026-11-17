@@ -37,6 +37,9 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 	// below so non-streaming routes still get a sane safety cap.
 
 	r.Get("/api/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		// The same for every caller and holding nothing secret, as /api/config:
+		// an app in a page of another origin reads it before it asks for that.
+		w.Header().Set("Access-Control-Allow-Origin", "*")
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "product": "chino"})
 	})
 
