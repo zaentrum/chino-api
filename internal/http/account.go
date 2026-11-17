@@ -16,7 +16,7 @@ import (
 // Deleting an account. A person deletes their own from any app — the app
 // stores require it of every app that makes accounts — with DELETE /api/v1/me:
 // chino-api deletes what it keeps of them (their progress, watch history,
-// watchlists and likes) and asks portal-api, with the account deletion token
+// watchlists, likes and the settings their account keeps) and asks portal-api, with the account deletion token
 // and the person's own bearer, to delete their account in the platform's
 // realm. The data is deleted inside a transaction that is committed only
 // once portal-api has deleted the account — or found it gone already — and
@@ -71,7 +71,7 @@ func deleteMe(st *store.Store, pc *portal.Client, token string) http.HandlerFunc
 				account = "gone"
 			}
 			slog.Info("account deletion: a person deleted their account", "account", account,
-				"progress", d.Deleted.Progress, "watched", d.Deleted.Watched, "watchlists", d.Deleted.Watchlists, "likes", d.Deleted.Likes)
+				"progress", d.Deleted.Progress, "watched", d.Deleted.Watched, "watchlists", d.Deleted.Watchlists, "likes", d.Deleted.Likes, "settings", d.Deleted.Settings)
 			writeJSON(w, http.StatusOK, map[string]any{"account": account, "deleted": d.Deleted})
 		case errors.As(err, &refused):
 			_ = d.Rollback(r.Context())

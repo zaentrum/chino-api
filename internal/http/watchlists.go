@@ -3,13 +3,16 @@ package http
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/zaentrum/chino-api/internal/auth"
+	"github.com/zaentrum/chino-api/internal/katalog"
 	"github.com/zaentrum/chino-api/internal/store"
 )
 
@@ -29,13 +32,59 @@ const (
 
 // watchlistJSON is the wire shape for a list in the overview / create /
 // rename responses. itemCount is omitted-as-zero is fine; createdAt is
-// RFC3339 per the contract.
+// RFC3339 per the contract. counts is the overview's, with include=counts
+// alone.
 type watchlistJSON struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	ItemCount int    `json:"itemCount"`
-	IsDefault bool   `json:"isDefault"`
-	CreatedAt string `json:"createdAt"`
+	ID        string      `json:"id"`
+	Name      string      `json:"name"`
+	ItemCount int         `json:"itemCount"`
+	IsDefault bool        `json:"isDefault"`
+	CreatedAt string      `json:"createdAt"`
+	Counts    *kindCounts `json:"counts,omitempty"`
+}
+
+// A list by kind: its movies, and its shows. A movie goes with the movies;
+// a series, an episode saved on its own and anything else a list could hold
+// go with the shows, under series, so that nothing a list holds is left out
+// - an id katalog-api serves no title of too. The kind of each title is
+// katalog-api's (katalog.Client.Kinds).
+const (
+	kindMovie  = "movie"
+	kindSeries = "series"
+)
+
+// listKind is the part of a list a title of katalog-api's type goes in.
+func listKind(typ string) string {
+	if typ == kindMovie {
+		return kindMovie
+	}
+	return kindSeries
+}
+
+// kindCounts is a list's titles counted by kind; the two add up to its
+// itemCount.
+type kindCounts struct {
+	Movie  int `json:"movie"`
+	Series int `json:"series"`
+}
+
+// kindsUnavailable answers a list whose titles' kinds katalog-api could not
+// say: 502, and nothing of the list.
+func kindsUnavailable(w http.ResponseWriter, err error) {
+	log.Printf("chino-api: the kinds of a list's titles could not be asked: %v", err)
+	http.Error(w, "catalog unavailable", http.StatusBadGateway)
+}
+
+// includes reports whether r's include parameter, a comma-separated list,
+// names token. A token it does not know is passed over, as katalog-api's
+// include passes one over.
+func includes(r *http.Request, token string) bool {
+	for _, t := range strings.Split(r.URL.Query().Get("include"), ",") {
+		if strings.TrimSpace(t) == token {
+			return true
+		}
+	}
+	return false
 }
 
 func toWatchlistJSON(r store.WatchlistRow) watchlistJSON {
@@ -80,8 +129,10 @@ func listError(w http.ResponseWriter, err error) bool {
 
 // listWatchlists -> GET /me/watchlists. Default list first, then others
 // by createdAt asc (ordering enforced in the store query). A capped viewer's
-// itemCount counts the titles of the list its cap allows.
-func listWatchlists(st *store.Store, g gate) http.HandlerFunc {
+// itemCount counts the titles of the list its cap allows. With
+// include=counts, each list has counts, its titles by kind:
+// {"movie": 4, "series": 3}.
+func listWatchlists(st *store.Store, g gate, kc *katalog.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := auth.SubjectFromContext(r.Context())
 		if userID == "" {
@@ -93,23 +144,61 @@ func listWatchlists(st *store.Store, g gate) http.HandlerFunc {
 			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if _, capped := auth.MaxRatingFromContext(r.Context()); capped {
+		_, capped := auth.MaxRatingFromContext(r.Context())
+		withCounts := includes(r, "counts")
+		var counts map[string]*kindCounts
+		if capped || withCounts {
+			// Every list's titles, from one read, so that a list's count
+			// and its counts by kind are of the same titles.
+			held, err := st.WatchlistItemsByList(r.Context(), userID)
+			if err != nil {
+				http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			var all []string
+			for _, row := range rows {
+				all = append(all, held[row.ID]...)
+			}
+			allowed, err := g.visibleIDs(r.Context(), all)
+			if err != nil {
+				catalogUnavailable(w, err)
+				return
+			}
+			var kinds map[string]string
+			if withCounts {
+				if kinds, err = kc.Kinds(r.Context(), bearerFrom(r), allowed); err != nil {
+					kindsUnavailable(w, err)
+					return
+				}
+				counts = make(map[string]*kindCounts, len(rows))
+			}
+			shown := make(map[string]bool, len(allowed))
+			for _, id := range allowed {
+				shown[id] = true
+			}
 			for i := range rows {
-				ids, err := st.GetWatchlistItems(r.Context(), rows[i].ID)
-				if err != nil {
-					http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
-					return
+				c := &kindCounts{}
+				for _, id := range held[rows[i].ID] {
+					if !shown[id] {
+						continue
+					}
+					if listKind(kinds[id]) == kindMovie {
+						c.Movie++
+					} else {
+						c.Series++
+					}
 				}
-				if ids, err = g.visibleIDs(r.Context(), ids); err != nil {
-					catalogUnavailable(w, err)
-					return
+				rows[i].ItemCount = c.Movie + c.Series
+				if withCounts {
+					counts[rows[i].ID] = c
 				}
-				rows[i].ItemCount = len(ids)
 			}
 		}
 		lists := make([]watchlistJSON, 0, len(rows))
 		for _, row := range rows {
-			lists = append(lists, toWatchlistJSON(row))
+			l := toWatchlistJSON(row)
+			l.Counts = counts[row.ID]
+			lists = append(lists, l)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"lists": lists})
 	}
@@ -191,12 +280,18 @@ func deleteWatchlist(st *store.Store) http.HandlerFunc {
 
 // getWatchlist -> GET /me/watchlists/{listId}. Returns the list metadata
 // plus its item ids (newest-added first), a capped viewer's those its cap
-// allows. 404 if not the caller's.
-func getWatchlist(st *store.Store, g gate) http.HandlerFunc {
+// allows. 404 if not the caller's. With kind=movie, its movies alone; with
+// kind=series, everything else (its series, its episodes, any other kind).
+func getWatchlist(st *store.Store, g gate, kc *katalog.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := auth.SubjectFromContext(r.Context())
 		if userID == "" {
 			http.Error(w, "no subject", http.StatusUnauthorized)
+			return
+		}
+		kind := r.URL.Query().Get("kind")
+		if kind != "" && kind != kindMovie && kind != kindSeries {
+			http.Error(w, "kind is movie or series", http.StatusBadRequest)
 			return
 		}
 		listID := chi.URLParam(r, "listId")
@@ -212,6 +307,14 @@ func getWatchlist(st *store.Store, g gate) http.HandlerFunc {
 		if ids, err = g.visibleIDs(r.Context(), ids); err != nil {
 			catalogUnavailable(w, err)
 			return
+		}
+		if kind != "" {
+			kinds, err := kc.Kinds(r.Context(), bearerFrom(r), ids)
+			if err != nil {
+				kindsUnavailable(w, err)
+				return
+			}
+			ids = slices.DeleteFunc(ids, func(id string) bool { return listKind(kinds[id]) != kind })
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id":        row.ID,

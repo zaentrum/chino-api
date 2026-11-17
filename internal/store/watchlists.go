@@ -252,6 +252,35 @@ func (s *Store) GetWatchlistItems(ctx context.Context, listID string) ([]string,
 	return out, rows.Err()
 }
 
+// WatchlistItemsByList is the item ids of each of userID's lists by the
+// list's id, newest-added first, in one query: what the overview counts by
+// kind and holds a capped viewer to. A list without items is not in it. Nil
+// store → empty.
+func (s *Store) WatchlistItemsByList(ctx context.Context, userID string) (map[string][]string, error) {
+	out := make(map[string][]string)
+	if s == nil || s.p == nil || userID == "" {
+		return out, nil
+	}
+	rows, err := s.p.Query(ctx,
+		`SELECT i.list_id, i.item_id
+		 FROM watchlist_items i
+		 JOIN watchlists w ON w.id = i.list_id
+		 WHERE w.user_id = $1
+		 ORDER BY i.added_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var listID, itemID string
+		if err := rows.Scan(&listID, &itemID); err != nil {
+			return nil, err
+		}
+		out[listID] = append(out[listID], itemID)
+	}
+	return out, rows.Err()
+}
+
 // AddWatchlistItem idempotently adds an item to one of the caller's
 // lists. ErrListNotFound when the list isn't the caller's. Idempotent —
 // re-adding is a no-op.

@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zaentrum/chino-api/internal/auth"
@@ -51,9 +52,15 @@ type Client struct {
 	HTTPStream *http.Client
 
 	// visible keeps katalog-api's answers of what a capped viewer may be
-	// served, of the titles sidecar subtitles belong to (ratings.go), and of
-	// the episodes one file holds (files.go).
+	// served, of the titles sidecar subtitles belong to (ratings.go), of the
+	// episodes one file holds (files.go), and of the kind of each title a
+	// list holds (kinds.go).
 	visible answers
+
+	// kindSlots bounds the requests Kinds has out at katalog-api at once,
+	// for every viewer together (kinds.go).
+	kindSlots chan struct{}
+	kindOnce  sync.Once
 }
 
 // New wires the read client. Callers that also need streaming +

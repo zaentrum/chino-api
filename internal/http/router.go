@@ -47,8 +47,10 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 
 	// Unauthenticated, CORS-open discovery doc so a neutral self-host
 	// client that knows only the server URL can learn the OIDC issuer +
-	// public client ids and bootstrap sign-in. See appconfig.go.
-	r.Get("/api/config", appConfig(cfg))
+	// public client ids and bootstrap sign-in. See appconfig.go. Its
+	// features.watchlist_kinds holds with a database, where the account
+	// keeps its settings.
+	r.Get("/api/config", appConfig(cfg, st != nil))
 
 	// Prometheus scrape target — un-authed because the chino-api Service
 	// is cluster-internal; only the in-cluster hyperv-prometheus reaches
@@ -99,6 +101,10 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// The signed-in person deletes their account: what chino keeps
 			// of them here, then the account through portal-api (account.go).
 			r.Delete("/me", deleteMe(st, pc, cfg.AccountDeletionToken))
+			// The settings the account keeps, the same on every device it
+			// signs in on (settings.go).
+			r.Get("/me/settings", getSettings(st))
+			r.Patch("/me/settings", patchSettings(st))
 			r.Get("/me/continue-watching", continueWatching(st, kc))
 			// Mints a long-lived stream token (TTL 6 h) the player
 			// uses on <video src> URLs so OIDC silent-renew can't
@@ -161,11 +167,14 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// The picker on the detail page toggles item membership per
 			// list; memberships hydrates the checkmarks + card "saved"
 			// badge in one round-trip. (memberships is registered before
-			// the {listId} routes so chi matches the static segment.)
-			r.Get("/me/watchlists", listWatchlists(st, g))
+			// the {listId} routes so chi matches the static segment.) A
+			// list is answered by kind (?kind=movie, ?kind=series) and the
+			// overview with its counts by kind (?include=counts), the kinds
+			// asked of katalog-api.
+			r.Get("/me/watchlists", listWatchlists(st, g, kc))
 			r.Post("/me/watchlists", createWatchlist(st))
 			r.Get("/me/watchlists/memberships", watchlistMemberships(st, g))
-			r.Get("/me/watchlists/{listId}", getWatchlist(st, g))
+			r.Get("/me/watchlists/{listId}", getWatchlist(st, g, kc))
 			r.Patch("/me/watchlists/{listId}", renameWatchlist(st))
 			r.Delete("/me/watchlists/{listId}", deleteWatchlist(st))
 			r.With(item).Put("/me/watchlists/{listId}/items/{itemId}", setWatchlistItem(st, true))

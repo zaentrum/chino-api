@@ -14,7 +14,9 @@ import (
 // (.well-known/openid-configuration) against that issuer. The client ids
 // here are the PUBLIC (no-secret) clients the operator must register in
 // their IdP with the device-authorization grant + offline_access enabled.
-func appConfig(cfg config.Config) http.HandlerFunc {
+// keepsSettings is whether this server keeps an account's settings: it has
+// a database.
+func appConfig(cfg config.Config, keepsSettings bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Non-secret + identical for every caller, so open CORS and a
 		// short cache: it changes only when the deployment is reconfigured.
@@ -37,10 +39,16 @@ func appConfig(cfg config.Config) http.HandlerFunc {
 			// (it answers 503 when this is false). downloads: a phone may
 			// keep a packaged title to play without a connection
 			// (DOWNLOADS_ENABLED); a client offers no download while it is
-			// false.
+			// false. watchlist_kinds: the account keeps whether its lists
+			// show movies and shows apart (GET and PATCH
+			// /api/v1/me/settings, watchlist_by_kind), and a list is
+			// answered by kind (?kind=, ?include=counts); without a
+			// database nothing is kept, and a client leaves the setting
+			// out.
 			"features": map[string]bool{
-				"feedback":  feedbackEnabled(cfg),
-				"downloads": cfg.DownloadsEnabled,
+				"feedback":        feedbackEnabled(cfg),
+				"downloads":       cfg.DownloadsEnabled,
+				"watchlist_kinds": keepsSettings,
 			},
 		})
 	}

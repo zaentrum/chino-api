@@ -46,7 +46,8 @@ paths:
       summary: Delete the signed-in person's data and their account
       description: >-
         Deletes what chino-api keeps of the person (playback progress, watch
-        history, named watchlists and their items, likes) and asks
+        history, named watchlists and their items, likes, the settings their
+        account keeps) and asks
         portal-api, with the person's bearer and the account deletion token,
         to delete their account (DELETE /api/portal/me). The rows are deleted
         in a transaction committed only once the account is deleted or gone
@@ -89,6 +90,60 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AccountRefusal" }
+  /v1/me/settings:
+    get:
+      summary: The settings the signed-in person's account keeps
+      description: >-
+        The settings that go with the account to every device it signs in
+        on, in one store, kept by the account's subject and deleted with its
+        data (DELETE /api/v1/me). It answers the fields it keeps, each at its
+        first value while nothing is set.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The settings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Settings" }
+        "401":
+          description: No bearer, or one that is not valid
+    patch:
+      summary: Change settings of the signed-in person's account
+      description: >-
+        Sets each field the body names and leaves the others as they are;
+        null puts a field back to its first value. A request that is refused
+        changes nothing: a field beside the refused one is not saved either.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SettingsChange" }
+      responses:
+        "200":
+          description: The settings as kept
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Settings" }
+        "400":
+          description: >-
+            Refused, and nothing changed. setting_unknown: a field the store
+            does not keep, named in values.name (the first such field, in the
+            order of their names). watchlist_by_kind_invalid: a value of
+            watchlist_by_kind that is neither true, false nor null. A body
+            that is no JSON object is answered "bad json", as plain text.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SettingRefusal" }
+              examples:
+                setting_unknown:
+                  value: { error: setting_unknown, values: { name: theme }, detail: the settings store keeps no such field }
+                watchlist_by_kind_invalid:
+                  value: { error: watchlist_by_kind_invalid, detail: "watchlist_by_kind takes true, false or null" }
+            text/plain:
+              schema: { type: string, example: bad json }
+        "401":
+          description: No bearer, or one that is not valid
   /v1/me/available:
     post:
       summary: Which of the titles a client keeps the viewer may watch now
@@ -373,8 +428,19 @@ paths:
   /v1/me/watchlists:
     get:
       summary: List the caller's named watchlists
-      description: Default list first, then others by createdAt ascending.
+      description: >-
+        Default list first, then others by createdAt ascending. With
+        include=counts, each list has counts, its titles by kind, which add
+        up to its itemCount; the kinds are the catalog's.
       security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: include
+          required: false
+          schema: { type: string, example: counts }
+          description: >-
+            comma-separated; counts adds each list's counts by kind. A token
+            this server does not know is passed over.
       responses:
         "200":
           description: OK
@@ -388,6 +454,8 @@ paths:
                     items: { $ref: "#/components/schemas/Watchlist" }
         "401":
           description: Unauthorized
+        "502":
+          description: The catalog could not say what a capped viewer may be served, or, with include=counts, the kinds of the titles
     post:
       summary: Create a new named watchlist
       security: [{ bearerAuth: [] }]
@@ -441,13 +509,21 @@ paths:
   /v1/me/watchlists/{listId}:
     get:
       summary: A single list's metadata + item ids
-      description: Items newest-added first.
+      description: >-
+        Items newest-added first. With kind, the items of that kind alone,
+        in the same order: movie its movies; series everything else, its
+        series, its episodes and any other kind, so that the two hold all of
+        the list. The kinds are the catalog's.
       security: [{ bearerAuth: [] }]
       parameters:
         - in: path
           name: listId
           required: true
           schema: { type: string }
+        - in: query
+          name: kind
+          required: false
+          schema: { type: string, enum: [movie, series] }
       responses:
         "200":
           description: OK
@@ -462,8 +538,12 @@ paths:
                   items:
                     type: array
                     items: { type: string }
+        "400":
+          description: A kind that is neither movie nor series
         "404":
           description: Not the caller's list
+        "502":
+          description: The catalog could not say what a capped viewer may be served, or, with kind, the kinds of the titles
     patch:
       summary: Rename a list
       description: Renaming the default list keeps isDefault=true.
@@ -1471,6 +1551,7 @@ components:
         watchlistItems: { type: integer }
         likes: { type: integer }
         legacyWatchlist: { type: integer }
+        settings: { type: integer }
     AccountRefusal:
       type: object
       properties:
@@ -1824,6 +1905,42 @@ components:
         itemCount: { type: integer }
         isDefault: { type: boolean }
         createdAt: { type: string, format: date-time }
+        counts:
+          type: object
+          description: GET /api/v1/me/watchlists with include=counts alone; the list's titles by kind
+          properties:
+            movie: { type: integer, example: 4 }
+            series: { type: integer, description: series, episodes and every other kind, example: 3 }
+    Settings:
+      type: object
+      required: [watchlist_by_kind]
+      properties:
+        watchlist_by_kind:
+          type: boolean
+          description: Whether every list shows its movies and its shows apart; false while nothing is set
+    SettingsChange:
+      type: object
+      additionalProperties: false
+      properties:
+        watchlist_by_kind:
+          type: boolean
+          nullable: true
+          description: null puts it back to false
+    SettingRefusal:
+      type: object
+      required: [error, detail]
+      description: >-
+        ADR-0023, part 4: the case's code, the values its sentence needs, and
+        a line of English for the log and for details, never a sentence for
+        a person.
+      properties:
+        error: { type: string, enum: [setting_unknown, watchlist_by_kind_invalid] }
+        values:
+          type: object
+          description: setting_unknown alone
+          properties:
+            name: { type: string, description: The field the store does not keep }
+        detail: { type: string }
   securitySchemes:
     bearerAuth:
       type: http

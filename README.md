@@ -36,7 +36,9 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `GET /api/v1/people/{id}/profile` | bearer JWT or stream token | a person's portrait (`profile_url`) |
 | `GET /api/v1/me/continue-watching` | bearer JWT | resume list |
 | `POST /api/v1/me/available` | bearer JWT | which of the titles a client keeps the viewer may watch now, in one request ([below](#downloads)) |
-| `GET /api/v1/me/watchlists` | bearer JWT | named watchlists |
+| `GET /api/v1/me/settings` · `PATCH /api/v1/me/settings` | bearer JWT | the settings the account keeps ([below](#the-accounts-settings)) |
+| `GET /api/v1/me/watchlists` | bearer JWT | named watchlists; with `include=counts` each list's titles by kind ([below](#lists-by-kind)) |
+| `GET /api/v1/me/watchlists/{listId}` | bearer JWT | a list's titles; with `kind=movie` or `kind=series` those of that kind |
 | `GET/POST /api/v1/items/{id}/progress` | bearer JWT | playback progress, a file's ([below](#one-file-several-episodes)); the resume point, none for a finished title ([below](#finished-titles)); a late position never over a newer one ([below](#downloads)) |
 | `GET /api/v1/items/{id}/subtitles` | bearer JWT | an item's sidecar subtitles at their URLs, a styled one's script beside it, and the fonts of its package ([below](#styled-subtitles)) |
 | `GET /api/v1/play/subs/{id}.vtt` · `.ass` | bearer JWT or stream token | a subtitle's file; its styled original (ASS or SSA) |
@@ -114,7 +116,7 @@ app that makes accounts to offer it — with `DELETE /api/v1/me` and their
 bearer, in the `Authorization` header (a `?token=` bearer is refused: a link
 someone could be sent). chino-api deletes what it keeps of them — playback
 progress, watch history, named watchlists and their items, likes, the legacy
-watchlist rows — and asks portal-api, with the person's bearer and the
+watchlist rows, the settings their account keeps — and asks portal-api, with the person's bearer and the
 account deletion token (`ACCOUNT_DELETION_TOKEN`, sent as
 `X-Account-Deletion-Token`), to delete their account in the platform's realm
 (`DELETE /api/portal/me`). The rows are deleted in a transaction committed
@@ -138,6 +140,42 @@ A client offers it as **Delete Account**, asks first and says what goes
 (their history, lists and progress, and their account), sends the request with
 its bearer, and signs out on `200`; on `409` it shows `message`, on `501` that
 accounts are deleted by whoever runs the server.
+
+### The account's settings
+
+`GET /api/v1/me/settings` answers the settings the account keeps, the same on
+every device it signs in on: `{"watchlist_by_kind": false}`, whether every
+list shows its movies and its shows apart, `false` while nothing is set.
+`PATCH /api/v1/me/settings` with `{"watchlist_by_kind": true}` sets it and
+answers the settings as kept; `null` puts it back to `false`. They are kept by
+the account's subject (migration 006, `account_settings`) and deleted with
+its data. A request that is refused changes nothing, the fields beside the
+refused one neither, and answers `400` with a code, its values and a line for
+the log:
+
+| Answer | When |
+|---|---|
+| `{"error": "setting_unknown", "values": {"name": "…"}, "detail": "…"}` | a field the store does not keep (the first such, by name) |
+| `{"error": "watchlist_by_kind_invalid", "detail": "…"}` | a value of `watchlist_by_kind` that is neither `true`, `false` nor `null` |
+| `bad json`, as plain text | a body that is no JSON object |
+
+Without a database nothing is kept: the settings answer their first values,
+and `GET /api/config` says `features.watchlist_kinds: false`, so the apps
+leave the setting out.
+
+### Lists by kind
+
+`GET /api/v1/me/watchlists/{listId}?kind=movie` is a list's movies, and
+`?kind=series` everything else it holds (its series, its episodes, any other
+kind, an id the catalog has no title of), each in the list's order, newest
+first; another `kind` is `400`. `GET /api/v1/me/watchlists?include=counts`
+gives each list its `counts`, `{"movie": 4, "series": 3}`, which add up to
+its `itemCount`. The kind is katalog-api's `type` of each title, asked with
+the viewer's bearer and cap by `GET /api/v1/items/{id}`, at most 8 at a time
+for every viewer together, and kept an hour; when katalog-api cannot say,
+the answer is `502` and nothing of the list. A capped viewer's lists by kind
+leave out what the cap does not allow, as its lists do. `GET /api/config`
+says `features.watchlist_kinds` where the account keeps the setting.
 
 ### Notices
 
@@ -482,7 +520,8 @@ the next. The request log shows credential values as `REDACTED`.
 
 
 When `PG_URL` is empty, progress and telemetry endpoints answer gracefully but
-do not persist — keeps local dev simple. When `OPENPROJECT_TOKEN` is empty the
+do not persist — keeps local dev simple — and `features.watchlist_kinds` is
+`false`, as the account keeps no settings then. When `OPENPROJECT_TOKEN` is empty the
 feedback endpoint answers 503 and clients keep the feature off: `GET /api/config`
 says so in `features.feedback` (`true` only with a token), so a client can hide
 its bug-report entry points before anyone tries.

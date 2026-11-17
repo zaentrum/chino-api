@@ -87,6 +87,10 @@ func seedUser(t *testing.T, st *Store, userID string) {
 	if _, err := st.p.Exec(ctx, `INSERT INTO watchlist_items (list_id, item_id) VALUES ($1, 'm1'), ($1, 'm2')`, list); err != nil {
 		t.Fatal(err)
 	}
+	on := true
+	if _, err := st.ChangeSettings(ctx, userID, SettingsChange{WatchlistByKind: &on}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // rowsOf counts userID's rows in each table.
@@ -100,6 +104,7 @@ func rowsOf(t *testing.T, st *Store, userID string) map[string]int {
 		"watchlist":         `SELECT count(*) FROM watchlist WHERE user_id = $1`,
 		"watchlists":        `SELECT count(*) FROM watchlists WHERE user_id = $1`,
 		"watchlist_items":   `SELECT count(*) FROM watchlist_items i JOIN watchlists l ON l.id = i.list_id WHERE l.user_id = $1`,
+		"account_settings":  `SELECT count(*) FROM account_settings WHERE user_id = $1`,
 	} {
 		var n int
 		if err := st.p.QueryRow(context.Background(), q, userID).Scan(&n); err != nil {
@@ -134,7 +139,7 @@ func TestDeleteUserData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Deleted{Progress: 2, Watched: 2, Watchlists: 1, WatchlistItems: 2, Likes: 2, LegacyWatchlist: 2}
+	want := Deleted{Progress: 2, Watched: 2, Watchlists: 1, WatchlistItems: 2, Likes: 2, LegacyWatchlist: 2, Settings: 1}
 	if d.Deleted != want {
 		t.Errorf("counted %+v, want %+v", d.Deleted, want)
 	}

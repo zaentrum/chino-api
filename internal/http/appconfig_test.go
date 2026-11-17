@@ -21,7 +21,7 @@ func TestAppConfigReportsWhetherFeedbackIsOn(t *testing.T) {
 		{"a-token", true},
 	} {
 		rec := httptest.NewRecorder()
-		appConfig(config.Config{OpenProjectURL: "https://openproject.example", OpenProjectToken: c.token})(rec, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+		appConfig(config.Config{OpenProjectURL: "https://openproject.example", OpenProjectToken: c.token}, false)(rec, httptest.NewRequest(http.MethodGet, "/api/config", nil))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("token %q: status %d", c.token, rec.Code)
 		}
@@ -43,7 +43,7 @@ func TestAppConfigReportsWhetherFeedbackIsOn(t *testing.T) {
 func TestAppConfigReportsWhetherDownloadsAreOn(t *testing.T) {
 	for _, on := range []bool{true, false} {
 		rec := httptest.NewRecorder()
-		appConfig(config.Config{DownloadsEnabled: on, OpenProjectToken: "a-token"})(rec, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+		appConfig(config.Config{DownloadsEnabled: on, OpenProjectToken: "a-token"}, false)(rec, httptest.NewRequest(http.MethodGet, "/api/config", nil))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("downloads %v: status %d", on, rec.Code)
 		}

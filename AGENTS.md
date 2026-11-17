@@ -37,7 +37,8 @@ The workflow `.github/workflows/build.yml` runs `go build ./...`,
 `go vet ./...` and `go test ./...` on every pull request and on main, with a
 throwaway PostgreSQL 16 for the tests that need one. The tests
 of what chino-api keeps (progress, watched, finished titles, Continue
-Watching, account deletion, a capped viewer's lists: 13 of the 108) need a
+Watching, account deletion, a capped viewer's lists, the account's settings,
+lists by kind: 17 of the 118) need a
 PostgreSQL in which they may create and drop schemas, named by
 `CHINO_API_TEST_DATABASE_URL`; each works in a schema of its own and drops it.
 Without it they are skipped. Every other service is a fake the tests start
@@ -84,5 +85,6 @@ inside its cluster ([how it is deployed](https://github.com/zaentrum/zaentrum/bl
   `/api/v1/me/watchlists/{listId}`), have no test.
 - A real identity provider: the tests' issuer is a fake.
 - `internal/http/openapi.yaml`, served at `/api/openapi.yaml`: no test
-  compares it with the routes.
+  compares it with the routes; one checks that it lists the settings
+  store's codes and the lists' `kind` and `include`.
 - The process's start (`cmd/server`) has no test.

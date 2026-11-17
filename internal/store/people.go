@@ -9,7 +9,8 @@ import (
 
 // A person's data, deleted: what chino-api keeps of a signed-in person, by
 // their subject — playback progress, watch history, named watchlists and
-// their items, likes, and the legacy single-watchlist rows. The bug-report
+// their items, likes, the legacy single-watchlist rows, and the settings
+// their account keeps. The bug-report
 // ledger (feedback_reports) holds no person's data: a fingerprint and a work
 // package.
 //
@@ -26,6 +27,7 @@ type Deleted struct {
 	WatchlistItems  int64 `json:"watchlistItems"`
 	Likes           int64 `json:"likes"`
 	LegacyWatchlist int64 `json:"legacyWatchlist"`
+	Settings        int64 `json:"settings"`
 }
 
 // Deletion is a person's data, deleted in a transaction not yet committed.
@@ -59,6 +61,7 @@ func (s *Store) DeleteUserData(ctx context.Context, userID string) (*Deletion, e
 		{&d.Deleted.Watched, `DELETE FROM watched_history WHERE user_id = $1`},
 		{&d.Deleted.Likes, `DELETE FROM likes WHERE user_id = $1`},
 		{&d.Deleted.LegacyWatchlist, `DELETE FROM watchlist WHERE user_id = $1`},
+		{&d.Deleted.Settings, `DELETE FROM account_settings WHERE user_id = $1`},
 	}
 	for _, step := range steps {
 		tag, err := tx.Exec(ctx, step.sql, userID)
