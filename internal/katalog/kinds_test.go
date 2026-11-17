@@ -637,6 +637,47 @@ func Test8C18TheTitlesTheCatalogKeepsFailingForStayBehindFromVisitToVisit(t *tes
 	}
 }
 
+// A mark lives while calls come across it, whether they ask its title or
+// not: with more titles katalog-api keeps failing for ahead of the movies
+// than one request asks, and visits further apart than kindTTL but within
+// kindFailedTTL, the first request of every visit after the first says every
+// movie, the titles it did not ask on the visits before still behind them.
+func Test8C18AMarkLivesWhileCallsComeAcrossIt(t *testing.T) {
+	k := newKindCatalog(t)
+	c := New(k.URL)
+	clock := &fakeClock{t: time.Now()}
+	c.now = clock.now
+	ctx := context.Background()
+	broken, movies := ids("broken", 3*kindRequests), ids("m", 20)
+	titles := append(append([]string{}, broken...), movies...)
+	saysMovies := func(got map[string]string) bool {
+		for _, id := range movies {
+			if got[id] != "movie" {
+				return false
+			}
+		}
+		return true
+	}
+	// The first visit: every title katalog-api fails for is marked.
+	for call := 1; !saysMovies(must(c.Kinds(ctx, "a-bearer", titles))) || !marked(c, broken[len(broken)-1]); call++ {
+		if call > len(broken)/kindRequests+3 {
+			t.Fatalf("the first visit: request %d, not every movie said or not every failing title marked", call)
+		}
+		clock.add(time.Second)
+	}
+	// Later visits, each kindFailedTTL less an hour after the last: one
+	// request asks no more than kindRequests of the titles it fails for.
+	for visit := 2; visit <= 5; visit++ {
+		clock.add(kindFailedTTL - time.Hour)
+		if got, err := c.Kinds(ctx, "a-bearer", titles); err != nil || !saysMovies(got) {
+			t.Errorf("visit %d, the first request: %v, %v; want every movie", visit, got, err)
+		}
+	}
+}
+
+// must is the answer of a call of Kinds, an error left out.
+func must(got map[string]string, _ error) map[string]string { return got }
+
 // A call that waits for another's request for a title asks it once itself
 // where that request ended in an error and its own wait has time left: with
 // its own bearer, within its own deadline. Neither a refusal of the other's

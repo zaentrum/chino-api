@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -70,8 +69,8 @@ func (g gate) owned(next http.Handler, what string, titleOf func(context.Context
 		}
 		item, err := titleOf(r.Context(), chi.URLParam(r, "id"))
 		if err != nil {
-			log.Printf("chino-api: the title of a %s could not be looked up: %v", what, err)
-			http.Error(w, "catalog unavailable", http.StatusBadGateway)
+			logFailure(r, "katalog-api", "the title of a "+what, err)
+			http.Error(w, errCatalog, http.StatusBadGateway)
 			return
 		}
 		g.serve(w, r, next, age, item)
@@ -85,8 +84,7 @@ func (g gate) serve(w http.ResponseWriter, r *http.Request, next http.Handler, a
 	if id != "" {
 		var err error
 		if ok, err = g.kc.VisibleOne(r.Context(), age, id); err != nil {
-			log.Printf("chino-api: what a rating cap allows could not be asked: %v", err)
-			http.Error(w, "catalog unavailable", http.StatusBadGateway)
+			catalogUnavailable(w, r, err)
 			return
 		}
 	}
@@ -110,11 +108,12 @@ func (g gate) visibleIDs(ctx context.Context, ids []string) ([]string, error) {
 	return g.kc.Visible(ctx, age, ids)
 }
 
-// catalogUnavailable answers a list that could not be held to the viewer's
-// cap: 502, and nothing of the list.
-func catalogUnavailable(w http.ResponseWriter, err error) {
-	log.Printf("chino-api: what a rating cap allows could not be asked: %v", err)
-	http.Error(w, "catalog unavailable", http.StatusBadGateway)
+// catalogUnavailable answers r, which could not be held to what the viewer
+// may be served (its cap, or what the catalog holds): 502 errCatalog, and
+// nothing of what it asked for; the failure is logged (logFailure).
+func catalogUnavailable(w http.ResponseWriter, r *http.Request, err error) {
+	logFailure(r, "katalog-api", "what the viewer may be served", err)
+	http.Error(w, errCatalog, http.StatusBadGateway)
 }
 
 // captured is an answer ProxyStream wrote, kept to be filtered before it
@@ -140,7 +139,8 @@ func (c *captured) Write(b []byte) (int, error) {
 // packaged ids) held to a capped viewer's cap: the answer is read whole, and
 // filter takes out of its JSON what the cap does not allow. An uncapped
 // viewer's answer is proxied as before; an answer that is no 200 goes out as
-// it came.
+// ProxyStream wrote it, an upstream's error answer as a line of chino-api's
+// own.
 func (g gate) filteredStream(kc *katalog.Client, path string,
 	filter func(ctx context.Context, body []byte) ([]byte, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -154,7 +154,7 @@ func (g gate) filteredStream(kc *katalog.Client, path string,
 		if c.code == http.StatusOK {
 			var err error
 			if body, err = filter(r.Context(), body); err != nil {
-				catalogUnavailable(w, err)
+				catalogUnavailable(w, r, err)
 				return
 			}
 		}

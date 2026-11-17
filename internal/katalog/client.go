@@ -13,8 +13,10 @@ package katalog
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -23,7 +25,7 @@ import (
 	"time"
 
 	"github.com/zaentrum/chino-api/internal/auth"
-	"github.com/zaentrum/chino-api/internal/redact"
+	"github.com/zaentrum/chino-api/internal/logline"
 )
 
 type Client struct {
@@ -749,9 +751,27 @@ func (c *Client) PlayInfoDurationMs(ctx context.Context, bearer, itemID string) 
 	return raw.DurationMs
 }
 
+// proxyUpstream is an upstream ProxyStream forwards to: its name, for the
+// server's log, and the answer of a request it did not answer, or failed
+// (500 or more), a fixed line that says what the caller cannot have.
+type proxyUpstream struct{ name, answer string }
+
+// proxyErrorHeaders are the headers of an upstream's error answer (400 or
+// more) ProxyStream passes on, what a client needs to act on it: Retry-After,
+// when to ask again (a 429, a 503), and Content-Range, the length a range
+// has to fall within (a 416). It passes on no other header of such an
+// answer, and none of its body.
+var proxyErrorHeaders = []string{"Retry-After", "Content-Range"}
+
+var (
+	proxyCatalog = proxyUpstream{"katalog-api", "catalog unavailable"}
+	proxyStream  = proxyUpstream{"chino-stream", "playback unavailable"}
+	proxyArtwork = proxyUpstream{"katalog-manager", "artwork unavailable"}
+)
+
 // ProxyStream forwards the named upstream path to the appropriate
 // service, copying Range + If-None-Match + Authorization + query string
-// and streaming the response (status, headers such as ETag, body)
+// and streaming a response below 400 (status, headers such as ETag, body)
 // verbatim. Routing is by path prefix because
 // chino-api stitches three upstreams behind one client today:
 //
@@ -762,14 +782,20 @@ func (c *Client) PlayInfoDurationMs(ctx context.Context, bearer, itemID string) 
 // When katalog-api grows an artwork endpoint, set ArtworkBaseURL to
 // the same value as BaseURL and ProxyStream picks the new home
 // automatically.
+//
+// An upstream that does not answer is 502 with a fixed line, what the caller
+// cannot have (proxyUpstream), and an upstream's error answer is answered by
+// refused; what failed is logged on the server.
 func (c *Client) ProxyStream(w http.ResponseWriter, r *http.Request, upstreamPath, bearer string) {
-	base := c.BaseURL
+	base, upstream := c.BaseURL, proxyCatalog
 	switch {
 	case strings.HasPrefix(upstreamPath, "/api/play"):
+		upstream = proxyStream
 		if c.StreamBaseURL != "" {
 			base = c.StreamBaseURL
 		}
 	case strings.HasPrefix(upstreamPath, "/api/artwork"):
+		upstream = proxyArtwork
 		if c.ArtworkBaseURL != "" {
 			base = c.ArtworkBaseURL
 		}
@@ -800,12 +826,21 @@ func (c *Client) ProxyStream(w http.ResponseWriter, r *http.Request, upstreamPat
 	}
 	resp, err := c.HTTPStream.Do(req)
 	if err != nil {
-		// The error quotes the upstream URL, query (credentials) included;
-		// clients report error bodies in telemetry and bug reports.
-		http.Error(w, "katalog upstream: "+redact.Text(err.Error()), http.StatusBadGateway)
+		// The error names the upstream's URL: through logline.Quote. A viewer
+		// who went before the upstream answered is logged as such, once.
+		if errors.Is(r.Context().Err(), context.Canceled) {
+			log.Printf("chino-api: %s %s: the viewer went before %s answered", r.Method, logline.Route(r), upstream.name)
+		} else {
+			log.Printf("chino-api: %s %s: %s did not answer: %s", r.Method, logline.Route(r), upstream.name, logline.Quote(err.Error()))
+		}
+		http.Error(w, upstream.answer, http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusBadRequest {
+		refused(w, r, upstream, resp)
+		return
+	}
 	for k, vs := range resp.Header {
 		// Which origins may read an answer is chino-api's to say, on its
 		// own routes: an upstream's Access-Control-* beside chino-api's
@@ -819,4 +854,28 @@ func (c *Client) ProxyStream(w http.ResponseWriter, r *http.Request, upstreamPat
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+// refused answers r with resp, an error answer of upstream (400 or more): its
+// status, with a fixed line of chino-api's own as plain text, upstream's for
+// 500 or more and the status's words (http.StatusText) for one below, and of
+// its headers proxyErrorHeaders alone. Of an answer of 500 or more the first
+// bytes are logged on the server, through logline.Quote; one below 500 (a
+// missing portrait, a stream token run out) is the caller's to act on, and
+// is not logged.
+func refused(w http.ResponseWriter, r *http.Request, upstream proxyUpstream, resp *http.Response) {
+	line := http.StatusText(resp.StatusCode)
+	if resp.StatusCode >= http.StatusInternalServerError || line == "" {
+		line = upstream.answer
+	}
+	if resp.StatusCode >= http.StatusInternalServerError {
+		first, _ := io.ReadAll(io.LimitReader(resp.Body, logline.Max))
+		log.Printf("chino-api: %s %s: %s answered %d: %s", r.Method, logline.Route(r), upstream.name, resp.StatusCode, logline.Quote(string(first)))
+	}
+	for _, h := range proxyErrorHeaders {
+		for _, v := range resp.Header.Values(h) {
+			w.Header().Add(h, v)
+		}
+	}
+	http.Error(w, line, resp.StatusCode)
 }

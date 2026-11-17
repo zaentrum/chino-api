@@ -189,12 +189,13 @@ its own wait has time left. One request asks about 500 titles at most, waits
 request whose viewer has gone before it asks asks nothing. A title whose kind
 katalog-api did not say for the request (it failed for it, did not answer in
 time, or was past the 500) goes with the shows, under `series`, in that
-answer, and is asked again the next time. A request stops asking once
+answer, and is asked again a later time. A request stops asking once
 katalog-api has failed it 8 times, its own asking again included; a title it
-failed for is asked after the others for a day after it last failed, the one
-it failed for longest ago first, so that the titles behind the ones it keeps
-failing for are asked, and said, by a later request, and on a later visit
-within that day by its first. When katalog-api said none of the
+failed for is asked after the others for a day after it last failed, or after
+a request last came across it, asked or not, the one it failed for longest
+ago first, so that the titles behind the ones it keeps failing for are asked,
+and said, by a later request, and on a later visit within that day by its
+first. When katalog-api said none of the
 kinds, the answer is `502` and nothing of the list. A capped viewer's lists by kind
 leave out what the cap does not allow, as its lists do. `GET /api/config`
 says `features.watchlist_kinds` where the account keeps the setting.
@@ -519,6 +520,51 @@ chino-stream and katalog-manager check it with the same key,
 own and logs a warning: its tokens then fail on every other pod and after each
 restart.
 
+### When something fails
+
+What failed is logged on the server, once, on one line: the request's
+method and route (its path, quoted, where it has none), and the error's text
+with its credentials and every query value blanked out (a search's words
+among them), its control characters escaped and cut to 256 bytes. The caller
+gets a fixed line that says what it cannot have, never the error's text.
+
+- katalog-api failing a route answers `502` `catalog unavailable`, as plain
+  text; the lists (`GET /api/v1/items`) and search answer it as their code,
+  `{"product": "chino", "error": "catalog unavailable", "detail": "the
+  catalog could not be read"}`.
+- An upstream the media routes forward to that does not answer: `502`
+  `playback unavailable` (chino-stream) or `artwork unavailable`
+  (katalog-manager's artwork, portraits too). Its error answer keeps its
+  status and is answered a line of chino-api's own, as plain text: the same
+  line for `500` or more, the status's words (`Not Found`) below; of its
+  headers only `Retry-After` and `Content-Range` go on, and the first bytes
+  of an answer of `500` or more are logged. An answer below `400` is passed
+  on as it is. An admin's packaging that katalog-manager does not answer:
+  `502` `packaging unavailable`.
+- A bug report OpenProject does not take: `502` `bug reports unavailable`.
+- portal-api failing account deletion or a notice's change is answered as
+  [Deleting an account](#deleting-an-account) and [Notices](#notices) say;
+  its refusal of a deletion (`409`) carries its `message` for the person.
+- A bearer that does not verify (expired, not signed by `OIDC_ISSUER`'s
+  keys, malformed) is `401` `invalid token`, and one made for another
+  audience than `OIDC_AUDIENCE` `401` `invalid token: wrong audience`, as
+  plain text.
+- A route that answers its read or write of the database failing answers
+  `500` `database error`, as plain text, whatever the error. Account
+  deletion answers its own: `DELETE /api/v1/me` `500`
+  `{"error": "data_not_deleted", "message": …}`, and
+  `DELETE /api/v1/admin/accounts/{sub}/data` `500` `the data could not be
+  deleted`. Where a read of it only adds to an answer, a failure leaves that
+  out and the route answers as without it: the viewer's `watched_at` on the
+  titles a route lists; the episode last watched that
+  `GET /api/v1/series/{id}/next-episode` goes on from without `after` (it
+  answers the first episode then); on Continue Watching, which episodes
+  after a finished one are watched, and the next one's resume point. A bug
+  report whose fingerprint cannot be kept is filed all the same.
+- A request whose viewer goes before the database or an upstream has
+  answered is answered as one that failed, its status and its line, and is
+  logged once as the viewer having gone before the answer.
+
 ## Local development
 
 ```bash
@@ -543,9 +589,8 @@ the next. The request log shows credential values as `REDACTED`.
 
 When `PG_URL` is empty, progress and telemetry endpoints answer gracefully but
 do not persist — keeps local dev simple — and `features.watchlist_kinds` is
-`false`, as the account keeps no settings then. With a database, a route whose
-read or write of it fails answers `500` `database error`, as plain text, and
-the error itself is logged on the server with the request's method and route. When `OPENPROJECT_TOKEN` is empty the
+`false`, as the account keeps no settings then ([how a failing database
+is answered](#when-something-fails)). When `OPENPROJECT_TOKEN` is empty the
 feedback endpoint answers 503 and clients keep the feature off: `GET /api/config`
 says so in `features.feedback` (`true` only with a token), so a client can hide
 its bug-report entry points before anyone tries.

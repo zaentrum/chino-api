@@ -70,11 +70,12 @@ type kindCounts struct {
 	Series int `json:"series"`
 }
 
-// kindsUnavailable answers a list whose titles' kinds katalog-api could say
-// none of: 502, and nothing of the list.
-func kindsUnavailable(w http.ResponseWriter, err error) {
-	log.Printf("chino-api: the kinds of a list's titles could not be asked: %v", err)
-	http.Error(w, "catalog unavailable", http.StatusBadGateway)
+// kindsUnavailable answers r, a list whose titles' kinds katalog-api could
+// say none of: 502 errCatalog, and nothing of the list; the failure is logged
+// (logFailure).
+func kindsUnavailable(w http.ResponseWriter, r *http.Request, err error) {
+	logFailure(r, "katalog-api", "the kinds of a list's titles", err)
+	http.Error(w, errCatalog, http.StatusBadGateway)
 }
 
 // kindsOf is the kind katalog-api gives each of ids (katalog.Client.Kinds),
@@ -83,7 +84,7 @@ func kindsUnavailable(w http.ResponseWriter, err error) {
 func kindsOf(w http.ResponseWriter, r *http.Request, kc *katalog.Client, ids []string) (map[string]string, bool) {
 	kinds, err := kc.Kinds(r.Context(), bearerFrom(r), ids)
 	if err != nil {
-		kindsUnavailable(w, err)
+		kindsUnavailable(w, r, err)
 		return nil, false
 	}
 	unsaid := map[string]bool{}
@@ -206,7 +207,7 @@ func listWatchlists(st *store.Store, g gate, kc *katalog.Client) http.HandlerFun
 			}
 			allowed, err := g.visibleIDs(r.Context(), all)
 			if err != nil {
-				catalogUnavailable(w, err)
+				catalogUnavailable(w, r, err)
 				return
 			}
 			var kinds map[string]string
@@ -354,7 +355,7 @@ func getWatchlist(st *store.Store, g gate, kc *katalog.Client) http.HandlerFunc 
 			return
 		}
 		if ids, err = g.visibleIDs(r.Context(), ids); err != nil {
-			catalogUnavailable(w, err)
+			catalogUnavailable(w, r, err)
 			return
 		}
 		if kind != "" {
@@ -415,7 +416,7 @@ func watchlistMemberships(st *store.Store, g gate) http.HandlerFunc {
 		}
 		ids, err := g.visibleIDs(r.Context(), parseIDsCSV(r.URL.Query().Get("ids"), maxMembershipID))
 		if err != nil {
-			catalogUnavailable(w, err)
+			catalogUnavailable(w, r, err)
 			return
 		}
 		m, err := st.ListMemberships(r.Context(), userID, ids)
@@ -483,7 +484,7 @@ func defaultListGet(st *store.Store, g gate) http.HandlerFunc {
 			return
 		}
 		if ids, err = g.visibleIDs(r.Context(), ids); err != nil {
-			catalogUnavailable(w, err)
+			catalogUnavailable(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

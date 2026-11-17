@@ -66,7 +66,7 @@ func postAvailable(g gate, kc *katalog.Client) http.HandlerFunc {
 			allowed, err = held(r.Context(), kc, bearerFrom(r), ids)
 		}
 		if err != nil {
-			catalogUnavailable(w, err)
+			catalogUnavailable(w, r, err)
 			return
 		}
 		if allowed == nil {
@@ -76,7 +76,7 @@ func postAvailable(g gate, kc *katalog.Client) http.HandlerFunc {
 		if len(ids) > 0 && len(allowed) == 0 {
 			n, err := kc.CountAll(r.Context(), bearerFrom(r))
 			if err != nil {
-				catalogUnavailable(w, err)
+				catalogUnavailable(w, r, err)
 				return
 			}
 			answer["titles"] = n

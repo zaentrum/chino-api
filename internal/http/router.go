@@ -1,7 +1,9 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -17,6 +19,7 @@ import (
 	"github.com/zaentrum/chino-api/internal/config"
 	"github.com/zaentrum/chino-api/internal/eventsse"
 	"github.com/zaentrum/chino-api/internal/katalog"
+	"github.com/zaentrum/chino-api/internal/logline"
 	"github.com/zaentrum/chino-api/internal/metrics"
 	"github.com/zaentrum/chino-api/internal/openproject"
 	"github.com/zaentrum/chino-api/internal/portal"
@@ -377,20 +380,62 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// errDatabase is the answer of every route whose read or write of chino-api's
-// database failed, with 500: a fixed line, whatever the error was.
+// errDatabase is the answer of a route whose read or write of chino-api's
+// database failed (storeFailed), with 500: a fixed line, whatever the error
+// was.
 const errDatabase = "database error"
 
+// errCatalog is the answer of a route whose request to katalog-api failed
+// (catalogFailed), with 502: a fixed line, whatever the error was. A route
+// that answers a code answers it as the code, with catalogDetail.
+const (
+	errCatalog    = "catalog unavailable"
+	catalogDetail = "the catalog could not be read"
+)
+
 // storeFailed answers r, whose read or write of the database failed with
-// err: the caller gets errDatabase and 500, and the error itself is logged on
-// the server, with the request's method and route.
+// err: the caller gets errDatabase and 500, and the failure is logged on the
+// server (logFailure).
 func storeFailed(w http.ResponseWriter, r *http.Request, err error) {
-	route := r.URL.Path
-	if rc := chi.RouteContext(r.Context()); rc != nil && rc.RoutePattern() != "" {
-		route = rc.RoutePattern()
-	}
-	log.Printf("chino-api: %s %s: the database failed: %v", r.Method, route, err)
+	logFailure(r, "the database", "", err)
 	http.Error(w, errDatabase, http.StatusInternalServerError)
+}
+
+// catalogFailed answers r, whose request to katalog-api failed with err: the
+// caller gets errCatalog and 502, and the failure is logged (logFailure).
+func catalogFailed(w http.ResponseWriter, r *http.Request, err error) {
+	logFailure(r, "katalog-api", "", err)
+	http.Error(w, errCatalog, http.StatusBadGateway)
+}
+
+// catalogFailedCode is catalogFailed for a route that answers a code (the
+// lists, search): errCatalog as the code, with catalogDetail.
+func catalogFailedCode(w http.ResponseWriter, r *http.Request, err error) {
+	logFailure(r, "katalog-api", "", err)
+	writeJSON(w, http.StatusBadGateway, map[string]any{
+		"product": "chino",
+		"error":   errCatalog,
+		"detail":  catalogDetail,
+	})
+}
+
+// logFailure logs, once, on the server, that upstream (the database,
+// katalog-api, …) failed r with err, asked about what where what is not "";
+// or, where r's viewer went before upstream answered (the request's context
+// is cancelled), that it went, in words of its own. The line has the
+// request's method and route, and err's text through logline.Quote. The
+// caller's answer is the route's fixed line, whichever it was: a request is
+// answered its status also when its viewer went.
+func logFailure(r *http.Request, upstream, what string, err error) {
+	about := ""
+	if what != "" {
+		about = " (" + what + ")"
+	}
+	if errors.Is(r.Context().Err(), context.Canceled) {
+		log.Printf("chino-api: %s %s: the viewer went before %s answered%s", r.Method, logline.Route(r), upstream, about)
+		return
+	}
+	log.Printf("chino-api: %s %s: %s failed%s: %s", r.Method, logline.Route(r), upstream, about, logline.Quote(err.Error()))
 }
 
 func whoAmI(w http.ResponseWriter, r *http.Request) {
@@ -474,12 +519,7 @@ func listItems(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 			// 502: katalog is upstream of us and it is what failed. The client
 			// can say "the catalog is unavailable" — which is true, actionable,
 			// and cannot be mistaken for content.
-			log.Printf("chino-api: katalog list failed (type=%q q=%q): %v", typ, q, err)
-			writeJSON(w, http.StatusBadGateway, map[string]any{
-				"product": "chino",
-				"error":   "catalog unavailable",
-				"detail":  err.Error(),
-			})
+			catalogFailedCode(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -533,14 +573,14 @@ func proxyEmbeddedSubtitle(kc *katalog.Client) http.HandlerFunc {
 // (proxied to chino-stream → file on the packages PVC).
 //
 // Empty list is a valid 200 — items genuinely have no sidecars all the
-// time. Upstream errors bubble up as 502 so the player's error path
-// shows something meaningful.
+// time. A catalog that fails is 502 "catalog unavailable", so the player's
+// error path shows something meaningful.
 func subtitlesList(kc *katalog.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 		it, err := kc.GetItemDetail(r.Context(), bearerFrom(r), id)
 		if err != nil {
-			http.Error(w, "katalog upstream: "+err.Error(), http.StatusBadGateway)
+			catalogFailed(w, r, err)
 			return
 		}
 		if it == nil {
@@ -650,7 +690,7 @@ func similarItems(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 		}
 		items, err := kc.ListSimilar(r.Context(), bearerFrom(r), id, limit)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
+			catalogFailed(w, r, err)
 			return
 		}
 		if items == nil {
@@ -677,7 +717,7 @@ func itemDetail(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 		id := chi.URLParam(r, "id")
 		item, err := kc.GetItemDetail(r.Context(), bearerFrom(r), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
+			catalogFailed(w, r, err)
 			return
 		}
 		if item == nil {

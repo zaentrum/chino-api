@@ -3,12 +3,15 @@ package auth
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"slices"
 	"strings"
 	"sync"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+
+	"github.com/zaentrum/chino-api/internal/logline"
 )
 
 type ctxKey int
@@ -118,7 +121,8 @@ func (v *Verifier) middleware(next http.Handler, allowStream bool) http.Handler 
 		}
 		tok, err := v.verifier.Verify(r.Context(), raw)
 		if err != nil {
-			http.Error(w, "invalid token: "+err.Error(), http.StatusUnauthorized)
+			log.Printf("chino-api: %s %s: a bearer was refused: %s", r.Method, logline.Route(r), logline.Quote(err.Error()))
+			http.Error(w, refusal(err), http.StatusUnauthorized)
 			return
 		}
 		ctx := context.WithValue(r.Context(), subjectKey, tok.Subject)
@@ -128,6 +132,25 @@ func (v *Verifier) middleware(next http.Handler, allowStream bool) http.Handler 
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// The answers to a bearer the verifier refuses, with 401: a fixed line,
+// whatever the reason, which is logged on the server. One made for another
+// audience than OIDC_AUDIENCE is answered as such, so that an app can say
+// that this server does not take the sign-in it used.
+const (
+	invalidToken  = "invalid token"
+	otherAudience = "invalid token: wrong audience"
+)
+
+// refusal is the answer to a bearer the verifier refused with err. go-oidc
+// says an audience it does not expect in no error of its own, only by the
+// first words of the error's text.
+func refusal(err error) string {
+	if strings.HasPrefix(err.Error(), "oidc: expected audience ") {
+		return otherAudience
+	}
+	return invalidToken
 }
 
 func SubjectFromContext(ctx context.Context) (string, error) {

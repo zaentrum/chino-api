@@ -1,6 +1,6 @@
 // Package redact keeps credentials out of what chino-api writes down: its
 // request log, the telemetry lines it logs, the bug reports it files and
-// the upstream errors it passes on.
+// the upstream errors it logs.
 //
 // Clients put credentials in URLs where they cannot set a header: the OIDC
 // access token as ?token= (an <img src>, a sendBeacon) and the signed stream

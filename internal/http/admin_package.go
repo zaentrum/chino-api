@@ -11,7 +11,6 @@ import (
 
 	"github.com/zaentrum/chino-api/internal/auth"
 	"github.com/zaentrum/chino-api/internal/config"
-	"github.com/zaentrum/chino-api/internal/redact"
 )
 
 // adminAccess is who may call the /api/v1/admin/* routes: a caller whose
@@ -84,6 +83,11 @@ func getPackageStatus(admin adminAccess, managerBase string) http.HandlerFunc {
 	}
 }
 
+// errPackaging is the answer of an admin's packaging request that
+// katalog-manager did not answer, with 502: a fixed line, whatever the error
+// was.
+const errPackaging = "packaging unavailable"
+
 // proxyToKatalogManager forwards an admin request to katalog-manager at
 // base, the caller's bearer with it: katalog-manager is a resource server of
 // the same realm and decides itself what the admin may do (its package
@@ -101,7 +105,8 @@ func proxyToKatalogManager(w http.ResponseWriter, r *http.Request, base, method,
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		http.Error(w, "katalog-manager upstream: "+redact.Text(err.Error()), http.StatusBadGateway)
+		logFailure(r, "katalog-manager", "", err)
+		http.Error(w, errPackaging, http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()

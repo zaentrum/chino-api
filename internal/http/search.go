@@ -3,7 +3,6 @@ package http
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -61,12 +60,7 @@ func search(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 			}
 			if err != nil {
 				// As listItems: the catalog is upstream of us and it failed.
-				log.Printf("chino-api: katalog search failed (q=%q): %v", opts.Query, err)
-				writeJSON(w, http.StatusBadGateway, map[string]any{
-					"product": "chino",
-					"error":   "catalog unavailable",
-					"detail":  err.Error(),
-				})
+				catalogFailedCode(w, r, err)
 				return
 			}
 		}

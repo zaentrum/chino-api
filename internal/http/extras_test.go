@@ -112,8 +112,8 @@ func TestExtrasAreProxiedWithTheStreamToken(t *testing.T) {
 // An extra's /play/info is chino-stream's /info of the extra, proxied as the
 // title's /play/info is: the query (the stream token, caps, q) riding on,
 // and chino-stream's answer coming back as it is - its JSON, pictureArea
-// and all, and its 404 (no such extra of the title) and 502 (katalog-api
-// cannot say).
+// and all - and the status of its 404 (no such extra of the title) and 502
+// (katalog-api cannot say).
 func TestAnExtrasPlayInfoIsChinoStreamsInfoOfIt(t *testing.T) {
 	const info = `{"mode":"packaged","video_codec":"avc1.64001f","width":1280,"height":720,` +
 		`"pictureArea":{"left":0,"top":0.1278,"width":1,"height":0.7444},"default_quality":"auto"}` + "\n"

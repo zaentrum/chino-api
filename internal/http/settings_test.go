@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -229,34 +231,77 @@ func Test16C25ADatabaseErrorKeepsItsDetailToTheServer(t *testing.T) {
 	}
 }
 
-// openapi.yaml documents GET /api/config with every field it answers, the
-// features among them.
+// openapi.yaml documents GET /api/config field for field: every field it
+// answers, the features among them, is a property of AppConfig, and every
+// property of AppConfig a field it answers, each a line of its own at the
+// indent of its level; an object's fields as the object's properties.
 func Test16C25OpenAPIDocumentsTheConfig(t *testing.T) {
 	doc := string(openapi)
-	if !strings.Contains(yamlBlock(doc, "  /config:"), "#/components/schemas/AppConfig") {
+	if !slices.Contains(strings.Split(yamlBlock(doc, "  /config:"), "\n"), `              schema: { $ref: "#/components/schemas/AppConfig" }`) {
 		t.Fatal("/config in openapi.yaml has no AppConfig")
 	}
-	schema := yamlBlock(doc, "    AppConfig:")
 	var answer map[string]json.RawMessage
 	w := httptest.NewRecorder()
 	appConfig(config.Config{}, false)(w, httptest.NewRequest(http.MethodGet, "/api/config", nil))
 	if err := json.Unmarshal(w.Body.Bytes(), &answer); err != nil {
 		t.Fatal(err)
 	}
-	for name, value := range answer {
-		if !strings.Contains(schema, "        "+name+":") {
-			t.Errorf("AppConfig in openapi.yaml has no %s", name)
-		}
-		var fields map[string]json.RawMessage
-		if json.Unmarshal(value, &fields) != nil {
-			continue
-		}
-		for field := range fields {
-			if !strings.Contains(yamlBlock(schema, "        "+name+":"), "            "+field+":") {
-				t.Errorf("AppConfig in openapi.yaml has no %s.%s", name, field)
-			}
+	props := yamlBlock(yamlBlock(doc, "    AppConfig:"), "      properties:")
+	if props == "" {
+		t.Fatal("AppConfig in openapi.yaml has no properties")
+	}
+	sameFields(t, "AppConfig", answer, props, 8)
+}
+
+// sameFields fails t where the fields of answer and the properties props
+// lists at indent are not the same, either way; and, for a field that is an
+// object, where its fields and the properties under its own are not.
+func sameFields(t *testing.T, what string, answer map[string]json.RawMessage, props string, indent int) {
+	t.Helper()
+	documented := properties(props, indent)
+	for name := range answer {
+		if !slices.Contains(documented, name) {
+			t.Errorf("%s in openapi.yaml has no %s", what, name)
 		}
 	}
+	for _, name := range documented {
+		value, answered := answer[name]
+		if !answered {
+			t.Errorf("%s in openapi.yaml has %s, which /api/config does not answer", what, name)
+			continue
+		}
+		own := yamlBlock(yamlBlock(props, strings.Repeat(" ", indent)+name+":"), strings.Repeat(" ", indent+2)+"properties:")
+		var fields map[string]json.RawMessage
+		isObject := bytes.HasPrefix(value, []byte("{")) && json.Unmarshal(value, &fields) == nil
+		switch {
+		case isObject && own == "":
+			t.Errorf("%s.%s in openapi.yaml has no properties", what, name)
+		case !isObject && own != "":
+			t.Errorf("%s.%s in openapi.yaml has properties, and /api/config answers it %s", what, name, value)
+		case isObject:
+			sameFields(t, what+"."+name, fields, own, indent+4)
+		}
+	}
+}
+
+// yamlProperty is a line that names a property: its name, then a colon at
+// the end of the line or before a space.
+var yamlProperty = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*):(?: |$)`)
+
+// properties are the names props lists at indent: its lines indented by
+// exactly indent spaces that are a property's, each whole.
+func properties(props string, indent int) []string {
+	var names []string
+	for _, l := range strings.Split(props, "\n") {
+		rest, ok := strings.CutPrefix(l, strings.Repeat(" ", indent))
+		if !ok || strings.HasPrefix(rest, " ") {
+			continue
+		}
+		if m := yamlProperty.FindStringSubmatch(rest); m != nil {
+			names = append(names, m[1])
+		}
+	}
+	return names
 }
 
 // features.watchlist_kinds is true exactly where the account keeps its

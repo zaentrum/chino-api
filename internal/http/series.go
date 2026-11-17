@@ -25,7 +25,7 @@ func seriesEpisodes(kc, streamKC *katalog.Client, st *store.Store) http.HandlerF
 		userID, _ := auth.SubjectFromContext(r.Context())
 		eps, err := kc.ListSeriesEpisodes(r.Context(), bearer, id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
+			catalogFailed(w, r, err)
 			return
 		}
 		if eps == nil { // katalog-api's 404: no such series, or one the viewer's cap leaves out
@@ -117,7 +117,7 @@ func nextEpisode(kc *katalog.Client, st *store.Store) http.HandlerFunc {
 
 		eps, err := kc.ListSeriesEpisodes(r.Context(), bearer, seriesID)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
+			catalogFailed(w, r, err)
 			return
 		}
 		if eps == nil { // katalog-api's 404: no such series, or one the viewer's cap leaves out
@@ -275,7 +275,7 @@ func itemSegments(kc, streamKC *katalog.Client) http.HandlerFunc {
 		bearer := bearerFrom(r)
 		segs, err := kc.ListSegments(r.Context(), bearer, id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
+			catalogFailed(w, r, err)
 			return
 		}
 		if segs == nil { // katalog-api's 404: no such item, or one the viewer's cap leaves out

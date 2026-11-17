@@ -18,9 +18,29 @@ info:
     likes, the Zap feeds) leave it out. chino-api passes the cap on to the
     catalog with every request.
 
-    A route whose read or write of chino-api's database fails answers 500
-    "database error", as plain text, whatever the error; the error itself is
-    logged on the server.
+    What failed is logged on the server; the caller gets a fixed line that
+    says what it cannot have, never the error's text. katalog-api failing a
+    route is 502 "catalog unavailable", as plain text, or as the code of the
+    lists and search ({product, error, detail}). Where the media routes'
+    upstream does not answer, 502 "playback unavailable" (chino-stream) or
+    "artwork unavailable" (katalog-manager); its error answer keeps its
+    status, with that line for 500 or more and the status's words below, as
+    plain text, and of its headers Retry-After and Content-Range alone; an
+    admin's packaging that katalog-manager does not answer, 502 "packaging
+    unavailable"; a bug report OpenProject does not take, 502 "bug reports
+    unavailable". A bearer that does not verify is 401 "invalid token", and
+    one made for another audience 401 "invalid token: wrong audience".
+
+    A route that answers its read or write of chino-api's database failing
+    answers 500 "database error", as plain text, whatever the error. Account
+    deletion answers its own 500s (DELETE /v1/me: data_not_deleted;
+    DELETE /v1/admin/accounts/{sub}/data: a line of text). Where a read of
+    the database only adds to an answer (the viewer's watched_at on the
+    titles listed, the episode last watched that next-episode goes on from,
+    which episodes after a finished one are watched and the next one's
+    resume point on Continue Watching), a failure leaves that out, and the
+    route answers as without it. A request whose viewer goes before the
+    database or an upstream has answered is answered as one that failed.
 servers:
   - url: /api
 paths:
@@ -437,8 +457,9 @@ paths:
         Proxied from the catalog manager with the posters' auth: a bearer
         or ?stream= (a stream token), so an <img src> works (?token=, the
         bearer in the URL, is deprecated and goes in the next release). Range and
-        If-None-Match pass through; so do the upstream's status and headers
-        (ETag, 304, 404).
+        If-None-Match pass through; so do the upstream's status and, below
+        400, its headers (ETag, 304). Its error answer (404 for a person
+        without a portrait) is the status with a line of chino-api's own.
       security: [{ bearerAuth: [] }, { streamToken: [] }]
       parameters:
         - in: path

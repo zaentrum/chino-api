@@ -28,10 +28,12 @@ const kindTTL = time.Hour
 const kindNoneTTL = time.Minute
 
 // kindFailedTTL is how long the mark of a title katalog-api failed to say the
-// kind of is kept (kindFailed): a day, longer than the time between one visit
-// to the lists and the next of a person who opens them every day, so that the
-// titles katalog-api keeps failing for stay behind the others from one visit
-// to the next, and the first request of a visit says the titles behind them.
+// kind of is kept (kindFailed), from when it last failed for it or, later, a
+// call last came across the mark, whether it asked the title or not: a day,
+// longer than the time between one visit to the lists and the next of a
+// person who opens them every day, so that the titles katalog-api keeps
+// failing for stay behind the others from one visit to the next, and the
+// first request of a visit says the titles behind them.
 // A mark only orders the asking and never answers for a title; it goes once
 // katalog-api says the title's kind, and the marks kept are bounded as every
 // answer is (maxAnswers).
@@ -111,10 +113,10 @@ func (a *kindAsk) wait(ctx context.Context) bool {
 // An id whose kind katalog-api did not say in this call - it failed for it,
 // did not answer within kindWait, or the id was past the first maxKindAsks
 // asked - is left out of the answer, and no answer of it is kept; one it
-// failed for is asked after the others for kindFailedTTL, the one it failed
-// for longest ago first. A viewer gone before the call asks anything asks
-// katalog-api nothing. The error is katalog-api's when it said the kind of
-// none of ids, and the viewer's when the viewer went.
+// failed for is asked after the others while its mark lives (kindFailedTTL),
+// the one it failed for longest ago first. A viewer gone before the call
+// asks anything asks katalog-api nothing. The error is katalog-api's when it
+// said the kind of none of ids, and the viewer's when the viewer went.
 func (c *Client) Kinds(ctx context.Context, bearer string, ids []string) (map[string]string, error) {
 	ids = onceEach(ids)
 	out := make(map[string]string, len(ids))
@@ -184,18 +186,21 @@ func (c *Client) kindsOf(ctx, wait context.Context, call *kindCall, ids []string
 		} else if ask, ok := c.visible.kindAsks[call.key+id]; ok {
 			waits[id] = ask
 		} else if f, ok := c.visible.kindFailed[call.key+id]; ok && now.Before(f.until) {
+			// Come across: the mark lives a kindFailedTTL from now, at its
+			// place in the order, whether or not this call gets to ask it.
+			f.until = now.Add(kindFailedTTL)
+			c.visible.kindFailed[call.key+id] = f
 			failedBefore = append(failedBefore, id)
 		} else {
 			register(id)
 		}
 	}
-	// A title katalog-api failed for within kindFailedTTL is asked after the
-	// others, so that the titles it fails for do not use up the call's
-	// kindRequests failures before the titles behind them are asked; the one
-	// it failed for longest ago first, so that one which has healed comes to
-	// the front of them.
+	// A title whose mark lives is asked after the others, so that the titles
+	// katalog-api fails for do not use up the call's kindRequests failures
+	// before the titles behind them are asked; the one it failed for longest
+	// ago first, so that one which has healed comes to the front of them.
 	slices.SortStableFunc(failedBefore, func(a, b string) int {
-		return c.visible.kindFailed[call.key+a].until.Compare(c.visible.kindFailed[call.key+b].until)
+		return c.visible.kindFailed[call.key+a].failed.Compare(c.visible.kindFailed[call.key+b].failed)
 	})
 	for _, id := range failedBefore {
 		register(id)
@@ -305,7 +310,7 @@ func (c *Client) kindAnswered(key, id string, ask *kindAsk, kind string, err err
 		keep(c.visible.kind, key+id, answer{item: kind, until: now.Add(ttl)}, now)
 		delete(c.visible.kindFailed, key+id)
 	} else if asked {
-		keep(c.visible.kindFailed, key+id, answer{until: now.Add(kindFailedTTL)}, now)
+		keep(c.visible.kindFailed, key+id, answer{until: now.Add(kindFailedTTL), failed: now}, now)
 	}
 	c.visible.mu.Unlock()
 	ask.kind, ask.err = kind, err

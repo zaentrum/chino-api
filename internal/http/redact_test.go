@@ -54,8 +54,8 @@ func TestRequestLoggerRedactsCredentials(t *testing.T) {
 }
 
 // End to end through NewRouter: the request log on stdout, the telemetry
-// lines (players report the URL that failed) and the body of an upstream
-// failure keep the credentials out.
+// lines (players report the URL that failed) and the log line of an
+// upstream failure keep the credentials out.
 func TestRouterKeepsCredentialsOutOfWhatItWrites(t *testing.T) {
 	rd, wr, err := os.Pipe()
 	if err != nil {
@@ -80,15 +80,16 @@ func TestRouterKeepsCredentialsOutOfWhatItWrites(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("telemetry: %d %s", w.Code, w.Body)
 	}
-	// An upstream that cannot be reached: the error names the URL, query
-	// included.
+	// An upstream that cannot be reached: the caller gets a fixed line, and
+	// the error, which names the URL, goes to the log, its query's values
+	// blanked out.
 	w = do(h, "GET", "/api/v1/items/i1/play/master.m3u8?stream="+urlStreamToken+"&q=high", nil)
-	if w.Code != http.StatusBadGateway {
-		t.Fatalf("unreachable upstream: %d %s", w.Code, w.Body)
+	if w.Code != http.StatusBadGateway || w.Body.String() != "playback unavailable\n" {
+		t.Fatalf("unreachable upstream: %d %q", w.Code, w.Body)
 	}
-	noSecret(t, "the upstream error body", w.Body.String())
-	if !strings.Contains(w.Body.String(), "master.m3u8?stream=REDACTED&q=high") {
-		t.Errorf("upstream error body %q", w.Body)
+	if !strings.Contains(appLog.String(), "chino-stream did not answer: ") ||
+		!strings.Contains(appLog.String(), "master.m3u8?stream=REDACTED&q=REDACTED") {
+		t.Errorf("the upstream's error in the log %q", appLog.String())
 	}
 
 	_ = wr.Close()

@@ -156,7 +156,7 @@ func postFeedback(st *store.Store, op *openproject.Client) http.HandlerFunc {
 					// open a fresh one; UpsertFeedbackReport below
 					// re-points the row and resets the count.
 				default:
-					http.Error(w, "openproject: "+err.Error(), http.StatusBadGateway)
+					feedbackFailed(w, r, err)
 					return
 				}
 			}
@@ -166,7 +166,7 @@ func postFeedback(st *store.Store, op *openproject.Client) http.HandlerFunc {
 
 		wpID, err := op.CreateWorkPackage(ctx, feedbackSubject(rep), feedbackDescription(username, rep, screenshot != nil))
 		if err != nil {
-			http.Error(w, "openproject: "+err.Error(), http.StatusBadGateway)
+			feedbackFailed(w, r, err)
 			return
 		}
 		if screenshot != nil {
@@ -192,6 +192,18 @@ func postFeedback(st *store.Store, op *openproject.Client) http.HandlerFunc {
 			"duplicate": false,
 		})
 	}
+}
+
+// errFeedback is the answer of a bug report OpenProject did not take, with
+// 502: a fixed line, whatever the error was.
+const errFeedback = "bug reports unavailable"
+
+// feedbackFailed answers r, a bug report OpenProject did not take with err:
+// the caller gets errFeedback and 502, and the failure is logged
+// (logFailure).
+func feedbackFailed(w http.ResponseWriter, r *http.Request, err error) {
+	logFailure(r, "OpenProject", "", err)
+	http.Error(w, errFeedback, http.StatusBadGateway)
 }
 
 // decodeFeedbackReport pulls the "report" JSON part out of the parsed

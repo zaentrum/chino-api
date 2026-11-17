@@ -37,7 +37,7 @@ func flagList(st *store.Store, spec flagSpec, g gate) http.HandlerFunc {
 			return
 		}
 		if ids, err = g.visibleIDs(r.Context(), ids); err != nil {
-			catalogUnavailable(w, err)
+			catalogUnavailable(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

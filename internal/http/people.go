@@ -26,7 +26,7 @@ func searchPeople(kc *katalog.Client) http.HandlerFunc {
 		}
 		people, err := kc.SearchPeople(r.Context(), bearerFrom(r), q, limit)
 		if err != nil {
-			http.Error(w, "katalog: "+err.Error(), http.StatusBadGateway)
+			catalogFailed(w, r, err)
 			return
 		}
 		if people == nil {
@@ -54,7 +54,7 @@ func getPerson(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 		pd, err := kc.GetPerson(r.Context(), bearerFrom(r), id, limit,
 			r.URL.Query().Get("lang"), r.Header.Get("Accept-Language"))
 		if err != nil {
-			http.Error(w, "katalog: "+err.Error(), http.StatusBadGateway)
+			catalogFailed(w, r, err)
 			return
 		}
 		if pd == nil {
@@ -74,7 +74,8 @@ func getPerson(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 // poster. It sits in the stream-token group with the posters, so a
 // profile_url in an <img src> authenticates with ?stream= (or ?token=),
 // which ProxyStream passes on with the query. Range, If-None-Match and the
-// upstream's status and headers (ETag, 304, 404) pass through.
+// upstream's status pass through, and its headers below 400 (ETag, 304); its
+// error answer (a 404) is the status with a line of chino-api's own.
 func proxyPersonProfile(kc *katalog.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")

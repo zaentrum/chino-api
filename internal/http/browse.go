@@ -51,7 +51,7 @@ func listGenres(kc *katalog.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		names, err := kc.ListGenres(r.Context(), bearerFrom(r))
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
+			catalogFailed(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"genres": names})

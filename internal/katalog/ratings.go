@@ -61,6 +61,8 @@ type answer struct {
 	item    string
 	items   []string
 	until   time.Time
+	// failed is when katalog-api last failed for the title (kindFailed).
+	failed time.Time
 }
 
 // keep stores a in m under k, making room first when m is full: what expired
