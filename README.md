@@ -181,14 +181,20 @@ the pairs it cannot. The kind is katalog-api's `type` of each title, asked
 with the viewer's bearer and cap by `GET /api/v1/items/{id}`, at most 8 at a
 time for every viewer together, once while it is being asked whoever else
 wants it, and kept an hour from its answer (that katalog-api has no title of
-an id, a minute). One request asks about 500 titles at most, waits 5 seconds
-at most for katalog-api, and gives each of its requests 2. A title whose kind
+an id, a minute). A request that waits for another's asking of a title asks
+it once itself, with its own bearer, where that asking ended in an error (the
+other's wait ran out, its bearer was refused, or it had stopped asking) and
+its own wait has time left. One request asks about 500 titles at most, waits
+5 seconds at most for katalog-api, and gives each of its requests 2; a
+request whose viewer has gone before it asks asks nothing. A title whose kind
 katalog-api did not say for the request (it failed for it, did not answer in
 time, or was past the 500) goes with the shows, under `series`, in that
 answer, and is asked again the next time. A request stops asking once
-katalog-api has failed it 8 times; a title it failed for is asked after the
-others for a minute, so that the titles behind the ones it fails for are
-asked, and said, by a later request. When katalog-api said none of the
+katalog-api has failed it 8 times, its own asking again included; a title it
+failed for is asked after the others for a day after it last failed, the one
+it failed for longest ago first, so that the titles behind the ones it keeps
+failing for are asked, and said, by a later request, and on a later visit
+within that day by its first. When katalog-api said none of the
 kinds, the answer is `502` and nothing of the list. A capped viewer's lists by kind
 leave out what the cap does not allow, as its lists do. `GET /api/config`
 says `features.watchlist_kinds` where the account keeps the setting.
@@ -537,7 +543,9 @@ the next. The request log shows credential values as `REDACTED`.
 
 When `PG_URL` is empty, progress and telemetry endpoints answer gracefully but
 do not persist — keeps local dev simple — and `features.watchlist_kinds` is
-`false`, as the account keeps no settings then. When `OPENPROJECT_TOKEN` is empty the
+`false`, as the account keeps no settings then. With a database, a route whose
+read or write of it fails answers `500` `database error`, as plain text, and
+the error itself is logged on the server with the request's method and route. When `OPENPROJECT_TOKEN` is empty the
 feedback endpoint answers 503 and clients keep the feature off: `GET /api/config`
 says so in `features.feedback` (`true` only with a token), so a client can hide
 its bug-report entry points before anyone tries.

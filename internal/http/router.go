@@ -377,6 +377,22 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// errDatabase is the answer of every route whose read or write of chino-api's
+// database failed, with 500: a fixed line, whatever the error was.
+const errDatabase = "database error"
+
+// storeFailed answers r, whose read or write of the database failed with
+// err: the caller gets errDatabase and 500, and the error itself is logged on
+// the server, with the request's method and route.
+func storeFailed(w http.ResponseWriter, r *http.Request, err error) {
+	route := r.URL.Path
+	if rc := chi.RouteContext(r.Context()); rc != nil && rc.RoutePattern() != "" {
+		route = rc.RoutePattern()
+	}
+	log.Printf("chino-api: %s %s: the database failed: %v", r.Method, route, err)
+	http.Error(w, errDatabase, http.StatusInternalServerError)
+}
+
 func whoAmI(w http.ResponseWriter, r *http.Request) {
 	sub, err := auth.SubjectFromContext(r.Context())
 	if err != nil {

@@ -64,6 +64,12 @@ type Client struct {
 	// kindWait and kindAskWait, where set, stand in for the constants of
 	// the same names (kinds.go): the tests' catalog is slow for a moment.
 	kindWait, kindAskWait time.Duration
+	// now, where set, is the time the answers of Kinds are kept by, and
+	// kindHook is called each time a call of Kinds has registered its own
+	// requests and taken those it waits for (kinds.go): the tests' clock,
+	// and the order of their calls.
+	now      func() time.Time
+	kindHook func()
 }
 
 // New wires the read client. Callers that also need streaming +

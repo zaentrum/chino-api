@@ -33,7 +33,7 @@ func flagList(st *store.Store, spec flagSpec, g gate) http.HandlerFunc {
 		}
 		ids, err := st.ListFlag(r.Context(), spec.table, userID, 200)
 		if err != nil {
-			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+			storeFailed(w, r, err)
 			return
 		}
 		if ids, err = g.visibleIDs(r.Context(), ids); err != nil {
@@ -61,7 +61,7 @@ func flagSet(st *store.Store, spec flagSpec, present bool) http.HandlerFunc {
 			return
 		}
 		if err := st.SetFlag(r.Context(), spec.table, userID, itemID, present); err != nil {
-			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+			storeFailed(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

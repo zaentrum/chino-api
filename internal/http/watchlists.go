@@ -148,9 +148,10 @@ func validListName(raw string) (string, bool) {
 	return name, true
 }
 
-// listError maps a store sentinel to the right status. Returns true when
-// it handled (wrote) the error.
-func listError(w http.ResponseWriter, err error) bool {
+// listError maps a store sentinel to the right status, and any other error
+// of the store to storeFailed's. Returns true when it handled (wrote) the
+// error.
+func listError(w http.ResponseWriter, r *http.Request, err error) bool {
 	switch {
 	case err == nil:
 		return false
@@ -163,7 +164,7 @@ func listError(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, store.ErrCannotDeleteDefault):
 		http.Error(w, "cannot delete default", http.StatusConflict)
 	default:
-		http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+		storeFailed(w, r, err)
 	}
 	return true
 }
@@ -185,7 +186,7 @@ func listWatchlists(st *store.Store, g gate, kc *katalog.Client) http.HandlerFun
 		}
 		rows, err := st.ListWatchlists(r.Context(), userID)
 		if err != nil {
-			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+			storeFailed(w, r, err)
 			return
 		}
 		_, capped := auth.MaxRatingFromContext(r.Context())
@@ -196,7 +197,7 @@ func listWatchlists(st *store.Store, g gate, kc *katalog.Client) http.HandlerFun
 			// and its counts by kind are of the same titles.
 			held, err := st.WatchlistItemsByList(r.Context(), userID)
 			if err != nil {
-				http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+				storeFailed(w, r, err)
 				return
 			}
 			var all []string
@@ -269,7 +270,7 @@ func createWatchlist(st *store.Store) http.HandlerFunc {
 			return
 		}
 		row, err := st.CreateWatchlist(r.Context(), userID, name)
-		if listError(w, err) {
+		if listError(w, r, err) {
 			return
 		}
 		writeJSON(w, http.StatusCreated, toWatchlistJSON(row))
@@ -299,7 +300,7 @@ func renameWatchlist(st *store.Store) http.HandlerFunc {
 			return
 		}
 		row, err := st.RenameWatchlist(r.Context(), userID, listID, name)
-		if listError(w, err) {
+		if listError(w, r, err) {
 			return
 		}
 		writeJSON(w, http.StatusOK, toWatchlistJSON(row))
@@ -315,7 +316,7 @@ func deleteWatchlist(st *store.Store) http.HandlerFunc {
 			return
 		}
 		listID := chi.URLParam(r, "listId")
-		if err := st.DeleteWatchlist(r.Context(), userID, listID); listError(w, err) {
+		if err := st.DeleteWatchlist(r.Context(), userID, listID); listError(w, r, err) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -344,12 +345,12 @@ func getWatchlist(st *store.Store, g gate, kc *katalog.Client) http.HandlerFunc 
 		}
 		listID := chi.URLParam(r, "listId")
 		row, err := st.GetWatchlist(r.Context(), userID, listID)
-		if listError(w, err) {
+		if listError(w, r, err) {
 			return
 		}
 		ids, err := st.GetWatchlistItems(r.Context(), listID)
 		if err != nil {
-			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+			storeFailed(w, r, err)
 			return
 		}
 		if ids, err = g.visibleIDs(r.Context(), ids); err != nil {
@@ -393,7 +394,7 @@ func setWatchlistItem(st *store.Store, add bool) http.HandlerFunc {
 		} else {
 			err = st.RemoveWatchlistItem(r.Context(), userID, listID, itemID)
 		}
-		if listError(w, err) {
+		if listError(w, r, err) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -419,7 +420,7 @@ func watchlistMemberships(st *store.Store, g gate) http.HandlerFunc {
 		}
 		m, err := st.ListMemberships(r.Context(), userID, ids)
 		if err != nil {
-			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+			storeFailed(w, r, err)
 			return
 		}
 		if m == nil {
@@ -473,12 +474,12 @@ func defaultListGet(st *store.Store, g gate) http.HandlerFunc {
 		}
 		listID, err := st.EnsureDefaultList(r.Context(), userID)
 		if err != nil {
-			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+			storeFailed(w, r, err)
 			return
 		}
 		ids, err := st.GetWatchlistItems(r.Context(), listID)
 		if err != nil {
-			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+			storeFailed(w, r, err)
 			return
 		}
 		if ids, err = g.visibleIDs(r.Context(), ids); err != nil {
@@ -506,7 +507,7 @@ func defaultListSet(st *store.Store, add bool) http.HandlerFunc {
 		}
 		listID, err := st.EnsureDefaultList(r.Context(), userID)
 		if err != nil {
-			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+			storeFailed(w, r, err)
 			return
 		}
 		if add {
@@ -515,7 +516,7 @@ func defaultListSet(st *store.Store, add bool) http.HandlerFunc {
 			err = st.RemoveWatchlistItem(r.Context(), userID, listID, itemID)
 		}
 		if err != nil {
-			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+			storeFailed(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

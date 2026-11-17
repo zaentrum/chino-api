@@ -48,7 +48,7 @@ func getProgress(s *store.Store) http.HandlerFunc {
 		}
 		res, err := s.GetResume(r.Context(), userID, itemID)
 		if err != nil {
-			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+			storeFailed(w, r, err)
 			return
 		}
 		body := map[string]any{"position_sec": res.PositionSec}
@@ -92,12 +92,12 @@ func postProgress(s *store.Store, kc *katalog.Client) http.HandlerFunc {
 		finished := !body.Dismiss && store.Finished(body.PositionSec, body.DurationSec)
 		if body.PlayedMsAgo == nil {
 			if err := s.SaveProgress(r.Context(), userID, ids, body.PositionSec, body.DurationSec); err != nil {
-				http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+				storeFailed(w, r, err)
 				return
 			}
 			if finished {
 				if err := s.MarkWatched(r.Context(), userID, ids...); err != nil {
-					http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+					storeFailed(w, r, err)
 					return
 				}
 			}
@@ -106,12 +106,12 @@ func postProgress(s *store.Store, kc *katalog.Client) http.HandlerFunc {
 			ago := time.Duration(max(*body.PlayedMsAgo, 0)) * time.Millisecond
 			won, err := s.SaveProgressPlayed(r.Context(), userID, ids, body.PositionSec, body.DurationSec, ago)
 			if err != nil {
-				http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+				storeFailed(w, r, err)
 				return
 			}
 			if finished && len(won) > 0 {
 				if err := s.MarkWatchedPlayed(r.Context(), userID, ago, won...); err != nil {
-					http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+					storeFailed(w, r, err)
 					return
 				}
 			}

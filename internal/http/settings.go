@@ -55,7 +55,7 @@ func getSettings(st *store.Store) http.HandlerFunc {
 		}
 		s, err := st.GetSettings(r.Context(), userID)
 		if err != nil {
-			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+			storeFailed(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, toSettingsJSON(s))
@@ -88,12 +88,12 @@ func patchSettings(st *store.Store) http.HandlerFunc {
 			return
 		}
 		if st == nil {
-			listError(w, store.ErrListNotFound)
+			listError(w, r, store.ErrListNotFound)
 			return
 		}
 		s, err := st.ChangeSettings(r.Context(), userID, change)
 		if err != nil {
-			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+			storeFailed(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, toSettingsJSON(s))

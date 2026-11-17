@@ -67,7 +67,7 @@ func postWatched(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 			err = st.MarkWatchedPlayed(r.Context(), userID, time.Duration(max(*body.PlayedMsAgo, 0))*time.Millisecond, ids...)
 		}
 		if err != nil {
-			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+			storeFailed(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -106,7 +106,7 @@ func listWatched(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 		}
 		rows, err := st.ListWatched(r.Context(), userID, limit, offset)
 		if err != nil {
-			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+			storeFailed(w, r, err)
 			return
 		}
 
@@ -158,7 +158,7 @@ func deleteWatched(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 			return
 		}
 		if err := st.UnmarkWatched(r.Context(), userID, fileOf(r, st, kc, userID, itemID)...); err != nil {
-			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+			storeFailed(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

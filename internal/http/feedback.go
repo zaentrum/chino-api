@@ -133,13 +133,13 @@ func postFeedback(st *store.Store, op *openproject.Client) http.HandlerFunc {
 		if rep.Fingerprint != "" && rep.Kind != "manual" {
 			row, err := st.GetFeedbackReport(ctx, rep.Fingerprint)
 			if err != nil {
-				http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+				storeFailed(w, r, err)
 				return
 			}
 			if row != nil && time.Since(row.LastSeen) <= feedbackDedupWindow {
 				count, err := st.BumpFeedbackReport(ctx, rep.Fingerprint)
 				if err != nil {
-					http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+					storeFailed(w, r, err)
 					return
 				}
 				err = op.AddComment(ctx, row.WorkPackageID, recurredComment(username, rep, count))

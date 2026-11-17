@@ -54,7 +54,7 @@ func continueWatching(st *store.Store, kc *katalog.Client) http.HandlerFunc {
 
 		rows, err := st.ListContinueWatching(r.Context(), userID, 40)
 		if err != nil {
-			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+			storeFailed(w, r, err)
 			return
 		}
 

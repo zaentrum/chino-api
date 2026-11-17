@@ -1,7 +1,9 @@
 package http
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -196,6 +198,65 @@ func Test16C25TheSettingsGoWithTheAccount(t *testing.T) {
 	}
 	checkSettings(t, h, kid, []settingsCase{{"deleted", http.MethodGet, ``, http.StatusOK, settingsOff}})
 	checkSettings(t, h, parent, []settingsCase{{"another person's", http.MethodGet, ``, http.StatusOK, settingsByKind}})
+}
+
+// Against Postgres: a read of the database that fails answers 500 with a
+// fixed line, and the error itself is logged on the server, with the route,
+// not sent to the caller.
+func Test16C25ADatabaseErrorKeepsItsDetailToTheServer(t *testing.T) {
+	st := testStore(t)
+	is := newIssuer(t)
+	h := filesRouter(t, is, "http://katalog-api.invalid", st)
+	var logged bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	st.Close() // every read and write of the store fails from now on
+
+	w := send(h, http.MethodGet, settingsRoute, bearerWith(t, is, "viewer-1", nil), "")
+	if w.Code != http.StatusInternalServerError || w.Body.String() != errDatabase+"\n" {
+		t.Errorf("%d %q, want 500 %q", w.Code, w.Body, errDatabase+"\n")
+	}
+	line := ""
+	for _, l := range strings.Split(logged.String(), "\n") {
+		if strings.Contains(l, "the database failed") {
+			line = l
+		}
+	}
+	if !strings.Contains(line, "GET "+settingsRoute+": the database failed: ") ||
+		strings.HasSuffix(line, "the database failed: ") {
+		t.Errorf("logged %q, want the route and the error", line)
+	}
+}
+
+// openapi.yaml documents GET /api/config with every field it answers, the
+// features among them.
+func Test16C25OpenAPIDocumentsTheConfig(t *testing.T) {
+	doc := string(openapi)
+	if !strings.Contains(yamlBlock(doc, "  /config:"), "#/components/schemas/AppConfig") {
+		t.Fatal("/config in openapi.yaml has no AppConfig")
+	}
+	schema := yamlBlock(doc, "    AppConfig:")
+	var answer map[string]json.RawMessage
+	w := httptest.NewRecorder()
+	appConfig(config.Config{}, false)(w, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+	if err := json.Unmarshal(w.Body.Bytes(), &answer); err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range answer {
+		if !strings.Contains(schema, "        "+name+":") {
+			t.Errorf("AppConfig in openapi.yaml has no %s", name)
+		}
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(value, &fields) != nil {
+			continue
+		}
+		for field := range fields {
+			if !strings.Contains(yamlBlock(schema, "        "+name+":"), "            "+field+":") {
+				t.Errorf("AppConfig in openapi.yaml has no %s.%s", name, field)
+			}
+		}
+	}
 }
 
 // features.watchlist_kinds is true exactly where the account keeps its

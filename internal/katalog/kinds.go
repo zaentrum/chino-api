@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,7 +15,8 @@ import (
 // it says it one title at a time (GET /api/v1/items/{id}). Kinds asks it for
 // the ids it has no answer of, a few at a time, and keeps each answer as it
 // arrives. A title's kind is asked once at a time: a viewer who wants it while
-// it is being asked waits for that answer.
+// it is being asked waits for that answer, and asks it once itself where that
+// request ended in an error and its own wait has time left.
 
 // kindTTL is how long the kind of a title is kept: a title keeps its kind,
 // so this is only how soon a title the catalog took in or dropped is seen.
@@ -25,10 +27,20 @@ const kindTTL = time.Hour
 // kind says within it.
 const kindNoneTTL = time.Minute
 
+// kindFailedTTL is how long the mark of a title katalog-api failed to say the
+// kind of is kept (kindFailed): a day, longer than the time between one visit
+// to the lists and the next of a person who opens them every day, so that the
+// titles katalog-api keeps failing for stay behind the others from one visit
+// to the next, and the first request of a visit says the titles behind them.
+// A mark only orders the asking and never answers for a title; it goes once
+// katalog-api says the title's kind, and the marks kept are bounded as every
+// answer is (maxAnswers).
+const kindFailedTTL = 24 * time.Hour
+
 // kindRequests is how many requests for a title's kind are out at
 // katalog-api at once, for every viewer together. Once katalog-api has
 // failed as many in one call of Kinds, that call asks nothing more; the
-// titles it failed for are asked after the others by the next.
+// titles it failed for are asked after the others by a later call.
 const kindRequests = 8
 
 // maxKindAsks is how many titles one call of Kinds asks katalog-api about:
@@ -49,9 +61,20 @@ const (
 // failed kindRequests times in the call.
 var errKindsFailing = errors.New("katalog kinds: not asked, katalog-api failed for too many titles")
 
-// kindAsk is a request for a title's kind out at katalog-api: done closes
-// once its answer, kind or err, is in.
+// kindCall is one call of Kinds: the viewer's bearer and its cap (key, as
+// answers are kept), until when it waits, how many titles it has asked
+// katalog-api itself, and how often katalog-api has failed it.
+type kindCall struct {
+	bearer, key string
+	deadline    time.Time
+	asked       int
+	failed      atomic.Int32
+}
+
+// kindAsk is a request for a title's kind out at katalog-api, for call: done
+// closes once its answer, kind or err, is in.
 type kindAsk struct {
+	call *kindCall
 	done chan struct{}
 	kind string
 	err  error
@@ -78,92 +101,41 @@ func (a *kindAsk) wait(ctx context.Context) bool {
 // with every catalog request; each answer is kept as it arrives, per cap and
 // id, for kindTTL ("" for kindNoneTTL), and at most kindRequests are asked at
 // a time. An id whose kind is being asked for another call is not asked
-// again: this call waits for that answer.
+// again: this call waits for that answer. Where that request ended in an
+// error (the other call's deadline, a refusal of its bearer, a title it no
+// longer asked after kindRequests failures) and this call's wait has time
+// left, this call asks the id once itself, with its own bearer, within its
+// own deadline, maxKindAsks and kindRequests failures; or, where another
+// call asks it again by then, waits for that answer.
 //
 // An id whose kind katalog-api did not say in this call - it failed for it,
 // did not answer within kindWait, or the id was past the first maxKindAsks
 // asked - is left out of the answer, and no answer of it is kept; one it
-// failed for is asked after the others for kindNoneTTL. The error is
-// katalog-api's when it said the kind of none of ids, and the viewer's when
-// the viewer went.
+// failed for is asked after the others for kindFailedTTL, the one it failed
+// for longest ago first. A viewer gone before the call asks anything asks
+// katalog-api nothing. The error is katalog-api's when it said the kind of
+// none of ids, and the viewer's when the viewer went.
 func (c *Client) Kinds(ctx context.Context, bearer string, ids []string) (map[string]string, error) {
 	ids = onceEach(ids)
 	out := make(map[string]string, len(ids))
 	if len(ids) == 0 {
 		return out, nil
 	}
-	now := time.Now()
-	deadline := now.Add(orDefault(c.kindWait, kindWait))
-	key := capOf(ctx) + "|"
-	waits := make(map[string]*kindAsk, len(ids))
-	var mine, failedBefore []string
-	var asks []*kindAsk
-	register := func(id string) {
-		if len(mine) < maxKindAsks {
-			ask := &kindAsk{done: make(chan struct{})}
-			c.visible.kindAsks[key+id] = ask
-			waits[id] = ask
-			mine, asks = append(mine, id), append(asks, ask)
-		}
+	// Gone before it registers anything: nobody waits for what it would ask.
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	c.visible.mu.Lock()
-	if c.visible.kind == nil {
-		c.visible.kind = map[string]answer{}
-	}
-	if c.visible.kindAsks == nil {
-		c.visible.kindAsks = map[string]*kindAsk{}
-	}
-	if c.visible.kindFailed == nil {
-		c.visible.kindFailed = map[string]answer{}
-	}
-	for _, id := range ids {
-		if a, ok := c.visible.kind[key+id]; ok && now.Before(a.until) {
-			out[id] = a.item
-		} else if ask, ok := c.visible.kindAsks[key+id]; ok {
-			waits[id] = ask
-		} else if f, ok := c.visible.kindFailed[key+id]; ok && now.Before(f.until) {
-			failedBefore = append(failedBefore, id)
-		} else {
-			register(id)
-		}
-	}
-	// A title katalog-api failed for within kindNoneTTL is asked after the
-	// others, so that the titles it fails for do not use up the call's
-	// kindRequests failures before the titles behind them are asked.
-	for _, id := range failedBefore {
-		register(id)
-	}
-	c.visible.mu.Unlock()
-
-	if len(mine) > 0 {
-		// This call's requests answer whoever waits for them: they are not
-		// the viewer's alone, and end at the deadline, not when it goes.
-		asking, stop := context.WithDeadline(context.WithoutCancel(ctx), deadline)
-		go func() {
-			defer stop()
-			c.askKinds(asking, bearer, key, mine, asks)
-		}()
-	}
-
-	wait, cancel := context.WithDeadline(ctx, deadline)
+	call := &kindCall{bearer: bearer, key: capOf(ctx) + "|",
+		deadline: time.Now().Add(orDefault(c.kindWait, kindWait))}
+	wait, cancel := context.WithDeadline(ctx, call.deadline)
 	defer cancel()
-	var failed error
-	for _, id := range ids {
-		ask, ok := waits[id]
-		if !ok || !ask.wait(wait) {
-			continue
+	again, failed := c.kindsOf(ctx, wait, call, ids, out)
+	if len(again) > 0 && wait.Err() == nil {
+		// The ids whose request, another call's, ended in an error: asked
+		// once more, by this call.
+		if _, err := c.kindsOf(ctx, wait, call, again, out); err != nil {
+			failed = err
 		}
-		// A waiter takes the outcome of the ask it shares for this call,
-		// the asker's deadline and a refusal of the asker's bearer
-		// included. An error is never kept: the title goes with the shows
-		// in this answer, and the next call asks again.
-		if ask.err != nil {
-			if failed == nil {
-				failed = ask.err
-			}
-			continue
-		}
-		out[id] = ask.kind
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -177,18 +149,104 @@ func (c *Client) Kinds(ctx context.Context, bearer string, ids []string) (map[st
 	return out, nil
 }
 
-// askKinds asks katalog-api the kind of each of ids, whose requests asks are,
-// at most kindRequests at a time for every viewer together, each within
-// kindAskWait, and answers each as it arrives (kindAnswered). The ones it
-// does not ask - the wait is over, or katalog-api failed kindRequests times -
-// it answers with why. It goes on when the viewer who asked goes: another may
-// wait for its answers.
-func (c *Client) askKinds(asking context.Context, bearer, key string, ids []string, asks []*kindAsk) {
+// kindsOf puts the kind of each of ids into out, for call: as kept; else the
+// answer of the request out for it; else that of a request call registers and
+// asks itself (askKinds), the titles katalog-api failed for after the others.
+// It waits for the answers within wait, and answers the ids whose request,
+// another call's, ended in an error, and the first error of one.
+func (c *Client) kindsOf(ctx, wait context.Context, call *kindCall, ids []string, out map[string]string) (again []string, failed error) {
+	now := c.clock()
+	waits := make(map[string]*kindAsk, len(ids))
+	var mine, failedBefore []string
+	var asks []*kindAsk
+	register := func(id string) {
+		if call.asked < maxKindAsks {
+			ask := &kindAsk{call: call, done: make(chan struct{})}
+			c.visible.kindAsks[call.key+id] = ask
+			waits[id] = ask
+			mine, asks = append(mine, id), append(asks, ask)
+			call.asked++
+		}
+	}
+	c.visible.mu.Lock()
+	if c.visible.kind == nil {
+		c.visible.kind = map[string]answer{}
+	}
+	if c.visible.kindAsks == nil {
+		c.visible.kindAsks = map[string]*kindAsk{}
+	}
+	if c.visible.kindFailed == nil {
+		c.visible.kindFailed = map[string]answer{}
+	}
+	for _, id := range ids {
+		if a, ok := c.visible.kind[call.key+id]; ok && now.Before(a.until) {
+			out[id] = a.item
+		} else if ask, ok := c.visible.kindAsks[call.key+id]; ok {
+			waits[id] = ask
+		} else if f, ok := c.visible.kindFailed[call.key+id]; ok && now.Before(f.until) {
+			failedBefore = append(failedBefore, id)
+		} else {
+			register(id)
+		}
+	}
+	// A title katalog-api failed for within kindFailedTTL is asked after the
+	// others, so that the titles it fails for do not use up the call's
+	// kindRequests failures before the titles behind them are asked; the one
+	// it failed for longest ago first, so that one which has healed comes to
+	// the front of them.
+	slices.SortStableFunc(failedBefore, func(a, b string) int {
+		return c.visible.kindFailed[call.key+a].until.Compare(c.visible.kindFailed[call.key+b].until)
+	})
+	for _, id := range failedBefore {
+		register(id)
+	}
+	c.visible.mu.Unlock()
+	if c.kindHook != nil {
+		c.kindHook()
+	}
+
+	if len(mine) > 0 {
+		// This call's requests answer whoever waits for them: they are not
+		// the viewer's alone, and end at the deadline, not when it goes.
+		asking, stop := context.WithDeadline(context.WithoutCancel(ctx), call.deadline)
+		go func() {
+			defer stop()
+			c.askKinds(asking, call, mine, asks)
+		}()
+	}
+
+	for _, id := range ids {
+		ask, ok := waits[id]
+		if !ok || !ask.wait(wait) {
+			continue
+		}
+		// An error is kept only as the mark of the order in which titles are
+		// asked (kindFailed), never as an answer: the title goes with the
+		// shows in this answer, and a later call asks again. Where the
+		// request was another call's, this one may ask it itself (Kinds).
+		if ask.err != nil {
+			if failed == nil {
+				failed = ask.err
+			}
+			if ask.call != call {
+				again = append(again, id)
+			}
+			continue
+		}
+		out[id] = ask.kind
+	}
+	return again, failed
+}
+
+// askKinds asks katalog-api the kind of each of ids for call, whose requests
+// asks are, at most kindRequests at a time for every viewer together, each
+// within kindAskWait, and answers each as it arrives (kindAnswered). The ones
+// it does not ask - the wait is over, or katalog-api failed call kindRequests
+// times - it answers with why. It goes on when the viewer who asked goes:
+// another may wait for its answers.
+func (c *Client) askKinds(asking context.Context, call *kindCall, ids []string, asks []*kindAsk) {
 	slots := c.kindSlotsOf()
-	var (
-		wg     sync.WaitGroup
-		failed atomic.Int32
-	)
+	var wg sync.WaitGroup
 	defer wg.Wait()
 	for i, id := range ids {
 		var why error
@@ -197,7 +255,7 @@ func (c *Client) askKinds(asking context.Context, bearer, key string, ids []stri
 			switch {
 			case asking.Err() != nil:
 				why = asking.Err()
-			case failed.Load() >= kindRequests:
+			case call.failed.Load() >= kindRequests:
 				why = errKindsFailing
 			}
 			if why != nil {
@@ -208,7 +266,7 @@ func (c *Client) askKinds(asking context.Context, bearer, key string, ids []stri
 		}
 		if why != nil {
 			for j := i; j < len(ids); j++ {
-				c.kindAnswered(key, ids[j], asks[j], "", why, false)
+				c.kindAnswered(call.key, ids[j], asks[j], "", why, false)
 			}
 			return
 		}
@@ -218,25 +276,25 @@ func (c *Client) askKinds(asking context.Context, bearer, key string, ids []stri
 			defer func() { <-slots }()
 			one, cancel := context.WithTimeout(asking, orDefault(c.kindAskWait, kindAskWait))
 			defer cancel()
-			it, err := c.GetItem(one, bearer, id)
+			it, err := c.GetItem(one, call.bearer, id)
 			kind := ""
 			if err != nil {
-				failed.Add(1)
+				call.failed.Add(1)
 			} else if it != nil {
 				kind = it.Type
 			}
-			c.kindAnswered(key, id, asks[i], kind, err, true)
+			c.kindAnswered(call.key, id, asks[i], kind, err, true)
 		}()
 	}
 }
 
 // kindAnswered is the answer of ask, the request for id's kind: kept unless
 // it is an error, for kindTTL ("" for kindNoneTTL), and given to whoever
-// waits for it. An error of katalog-api's (asked) is kept for kindNoneTTL
-// as well, for the order in which Kinds asks (kindFailed), never as an
+// waits for it. An error of katalog-api's (asked) is kept for kindFailedTTL
+// as the mark of the order in which Kinds asks (kindFailed), never as an
 // answer.
 func (c *Client) kindAnswered(key, id string, ask *kindAsk, kind string, err error, asked bool) {
-	now := time.Now()
+	now := c.clock()
 	c.visible.mu.Lock()
 	delete(c.visible.kindAsks, key+id)
 	if err == nil {
@@ -247,7 +305,7 @@ func (c *Client) kindAnswered(key, id string, ask *kindAsk, kind string, err err
 		keep(c.visible.kind, key+id, answer{item: kind, until: now.Add(ttl)}, now)
 		delete(c.visible.kindFailed, key+id)
 	} else if asked {
-		keep(c.visible.kindFailed, key+id, answer{until: now.Add(kindNoneTTL)}, now)
+		keep(c.visible.kindFailed, key+id, answer{until: now.Add(kindFailedTTL)}, now)
 	}
 	c.visible.mu.Unlock()
 	ask.kind, ask.err = kind, err
@@ -258,6 +316,15 @@ func (c *Client) kindAnswered(key, id string, ask *kindAsk, kind string, err err
 func (c *Client) kindSlotsOf() chan struct{} {
 	c.kindOnce.Do(func() { c.kindSlots = make(chan struct{}, kindRequests) })
 	return c.kindSlots
+}
+
+// clock is the time the answers of Kinds are kept by: c.now where it is set,
+// else the time.
+func (c *Client) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
 }
 
 // orDefault is d, or def where d is 0.

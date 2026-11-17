@@ -17,6 +17,10 @@ info:
     lists (browse, search, people, continue watching, history, watchlists,
     likes, the Zap feeds) leave it out. chino-api passes the cap on to the
     catalog with every request.
+
+    A route whose read or write of chino-api's database fails answers 500
+    "database error", as plain text, whatever the error; the error itself is
+    logged on the server.
 servers:
   - url: /api
 paths:
@@ -33,6 +37,22 @@ paths:
                 properties:
                   status: { type: string }
                   product: { type: string }
+  /config:
+    get:
+      summary: What a client needs to know of this server before it signs in
+      description: >-
+        The same for every caller and holding nothing secret: it asks for no
+        bearer, any origin may read it (Access-Control-Allow-Origin: *), and
+        it may be cached for 5 minutes (Cache-Control: public, max-age=300).
+        A client that knows only the server's address reads here the
+        identity provider to sign in with, the public client id of its
+        platform, and what the server offers (features).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AppConfig" }
   /v1/me:
     get:
       summary: Echo the caller's OIDC subject
@@ -1519,6 +1539,54 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/NoticeRefusal" }
   schemas:
+    AppConfig:
+      type: object
+      required: [product, apiBase, oidcIssuer, oidcAudience, oidcEnabled, oidcClientId, features]
+      properties:
+        product: { type: string, enum: [chino] }
+        apiBase:
+          type: string
+          description: >-
+            Where this server's API is reached, <origin>/api: PUBLIC_BASE_URL's
+            origin where it is set, else the request's (its X-Forwarded-Proto
+            behind a proxy)
+        oidcIssuer: { type: string, description: "The identity provider a client signs in with (OIDC_ISSUER)" }
+        oidcAudience: { type: string, description: "The audience a bearer is checked for (OIDC_AUDIENCE)" }
+        oidcEnabled:
+          type: boolean
+          description: Whether a bearer is checked; false (OIDC_ENABLED=false) lets a request through without one
+        oidcClientId:
+          type: object
+          description: The public client (no secret) each platform signs in with
+          required: [tv, mobile, web, portal]
+          properties:
+            tv: { type: string, description: OIDC_CLIENT_ID_TV }
+            mobile: { type: string, description: OIDC_CLIENT_ID_MOBILE }
+            web: { type: string, description: OIDC_CLIENT_ID_WEB }
+            portal: { type: string, description: OIDC_CLIENT_ID_PORTAL }
+        features:
+          type: object
+          description: What this server offers; a client shows each only where it is true
+          required: [feedback, downloads, watchlist_kinds]
+          properties:
+            feedback:
+              type: boolean
+              description: >-
+                POST /api/v1/feedback files bug reports: an OpenProject token is
+                configured (OPENPROJECT_TOKEN). False, it answers 503.
+            downloads:
+              type: boolean
+              description: >-
+                A phone may keep a packaged title to play without a connection
+                (DOWNLOADS_ENABLED, true unless it is false, 0, no or off). False,
+                a client offers no download.
+            watchlist_kinds:
+              type: boolean
+              description: >-
+                The account keeps whether its lists show movies and shows apart
+                (GET and PATCH /api/v1/me/settings, watchlist_by_kind), and a list
+                is answered by kind (kind, include=counts): true on a server with
+                a database and sign-in on. False, a client leaves the setting out.
     Notice:
       type: object
       required: [id, addon, addonTitle, title, body, link, itemId, createdAt, readAt]
