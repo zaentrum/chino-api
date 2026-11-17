@@ -22,7 +22,8 @@ import (
 // ADR-0023, part 4 (codeAnswer), and the request changes nothing: the fields
 // beside the refused one neither.
 
-// maxSettingsBody bounds what a PATCH of the settings reads.
+// maxSettingsBody bounds what a PATCH of the settings reads: a longer body
+// is refused.
 const maxSettingsBody = 4096
 
 // settingsJSON is the settings as the store answers them.
@@ -62,7 +63,9 @@ func getSettings(st *store.Store) http.HandlerFunc {
 }
 
 // patchSettings -> PATCH /me/settings {"watchlist_by_kind": true|false|null}.
-// 200 with the settings as kept.
+// 200 with the settings as kept. Without a database, where nothing is kept,
+// a change the store takes is answered as creating, renaming or deleting a
+// list is then (listError of store.ErrListNotFound).
 func patchSettings(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := auth.SubjectFromContext(r.Context())
@@ -71,8 +74,9 @@ func patchSettings(st *store.Store) http.HandlerFunc {
 			return
 		}
 		defer r.Body.Close()
-		var body map[string]json.RawMessage
-		if err := json.NewDecoder(io.LimitReader(r.Body, maxSettingsBody)).Decode(&body); err != nil || body == nil {
+		// A body past maxSettingsBody fails to read, and is no JSON object.
+		body, ok := jsonObject(http.MaxBytesReader(w, r.Body, maxSettingsBody))
+		if !ok {
 			// A body that is no JSON object, answered as the lists' routes
 			// answer one.
 			http.Error(w, "bad json", http.StatusBadRequest)
@@ -83,6 +87,10 @@ func patchSettings(st *store.Store) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, refused)
 			return
 		}
+		if st == nil {
+			listError(w, store.ErrListNotFound)
+			return
+		}
 		s, err := st.ChangeSettings(r.Context(), userID, change)
 		if err != nil {
 			http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
@@ -90,6 +98,39 @@ func patchSettings(st *store.Store) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, toSettingsJSON(s))
 	}
+}
+
+// jsonObject is the fields of the one JSON object body holds, by name; false
+// for a body that holds anything else, a field named twice, or more after the
+// object than white space.
+func jsonObject(body io.Reader) (map[string]json.RawMessage, bool) {
+	dec := json.NewDecoder(body)
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return nil, false
+	}
+	fields := map[string]json.RawMessage{}
+	for dec.More() {
+		t, err := dec.Token()
+		name, isName := t.(string)
+		if err != nil || !isName {
+			return nil, false
+		}
+		if _, twice := fields[name]; twice {
+			return nil, false
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return nil, false
+		}
+		fields[name] = value
+	}
+	if t, err := dec.Token(); err != nil || t != json.Delim('}') {
+		return nil, false
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, false
+	}
+	return fields, true
 }
 
 // settingsChange is what body changes; or, where the store refuses a field

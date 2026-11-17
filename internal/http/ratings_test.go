@@ -432,7 +432,9 @@ func TestWhatKatalogDoesNotFindIs404(t *testing.T) {
 }
 
 // testDatabase names the PostgreSQL the tests of chino-api's own lists use;
-// they are skipped without it. Each test works in a schema of its own.
+// they are skipped without it, and fail without it where CI is set, so that a
+// workflow that does not name one cannot pass by skipping them. Each test
+// works in a schema of its own.
 const testDatabase = "CHINO_API_TEST_DATABASE_URL"
 
 // testStore is chino-api's store, migrated, in a schema of its own on the
@@ -441,6 +443,9 @@ func testStore(t *testing.T) *store.Store {
 	t.Helper()
 	dsn := os.Getenv(testDatabase)
 	if dsn == "" {
+		if os.Getenv("CI") != "" {
+			t.Fatalf("CI is set and %s is not: the tests of the lists chino-api keeps would not run", testDatabase)
+		}
 		t.Skipf("set %s to run the tests of the lists chino-api keeps", testDatabase)
 	}
 	ctx := context.Background()

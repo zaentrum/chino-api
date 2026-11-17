@@ -61,6 +61,9 @@ type Client struct {
 	// for every viewer together (kinds.go).
 	kindSlots chan struct{}
 	kindOnce  sync.Once
+	// kindWait and kindAskWait, where set, stand in for the constants of
+	// the same names (kinds.go): the tests' catalog is slow for a moment.
+	kindWait, kindAskWait time.Duration
 }
 
 // New wires the read client. Callers that also need streaming +

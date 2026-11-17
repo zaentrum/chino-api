@@ -107,7 +107,8 @@ them, for a badge.
 
 The tests of chino-api's own lists need a PostgreSQL in which they may create
 and drop schemas, named by `CHINO_API_TEST_DATABASE_URL`, and are skipped
-without it.
+without it; where `CI` is set, as in the workflow, they fail without it
+instead.
 
 ### Deleting an account
 
@@ -157,23 +158,38 @@ the log:
 |---|---|
 | `{"error": "setting_unknown", "values": {"name": "…"}, "detail": "…"}` | a field the store does not keep (the first such, by name) |
 | `{"error": "watchlist_by_kind_invalid", "detail": "…"}` | a value of `watchlist_by_kind` that is neither `true`, `false` nor `null` |
-| `bad json`, as plain text | a body that is no JSON object |
+| `bad json`, as plain text | a body that is no JSON object: one that names a field twice, has more than white space after the object, or is longer than 4096 bytes, too |
 
-Without a database nothing is kept: the settings answer their first values,
-and `GET /api/config` says `features.watchlist_kinds: false`, so the apps
-leave the setting out.
+Without a database nothing is kept: the settings answer their first values, a
+`PATCH` the store takes answers `404` `list not found`, as creating, renaming
+or deleting a list answers without one, and `GET /api/config` says
+`features.watchlist_kinds: false`, so the apps leave the setting out. With
+sign-in off (`OIDC_ENABLED=false`) a request has no account: the routes
+answer `401`, and `features.watchlist_kinds` is `false` as well.
 
 ### Lists by kind
 
 `GET /api/v1/me/watchlists/{listId}?kind=movie` is a list's movies, and
 `?kind=series` everything else it holds (its series, its episodes, any other
 kind, an id the catalog has no title of), each in the list's order, newest
-first; another `kind` is `400`. `GET /api/v1/me/watchlists?include=counts`
-gives each list its `counts`, `{"movie": 4, "series": 3}`, which add up to
-its `itemCount`. The kind is katalog-api's `type` of each title, asked with
-the viewer's bearer and cap by `GET /api/v1/items/{id}`, at most 8 at a time
-for every viewer together, and kept an hour; when katalog-api cannot say,
-the answer is `502` and nothing of the list. A capped viewer's lists by kind
+first; another `kind`, or `kind` given twice, is `400`.
+`GET /api/v1/me/watchlists?include=counts` gives each list its `counts`,
+`{"movie": 4, "series": 3}`, which add up to its `itemCount`; `include`
+given twice is `400`. On both, a query that does not parse (a pair with a
+`;`, a bad `%` escape) is `400` `bad query`, as plain text, not read without
+the pairs it cannot. The kind is katalog-api's `type` of each title, asked
+with the viewer's bearer and cap by `GET /api/v1/items/{id}`, at most 8 at a
+time for every viewer together, once while it is being asked whoever else
+wants it, and kept an hour from its answer (that katalog-api has no title of
+an id, a minute). One request asks about 500 titles at most, waits 5 seconds
+at most for katalog-api, and gives each of its requests 2. A title whose kind
+katalog-api did not say for the request (it failed for it, did not answer in
+time, or was past the 500) goes with the shows, under `series`, in that
+answer, and is asked again the next time. A request stops asking once
+katalog-api has failed it 8 times; a title it failed for is asked after the
+others for a minute, so that the titles behind the ones it fails for are
+asked, and said, by a later request. When katalog-api said none of the
+kinds, the answer is `502` and nothing of the list. A capped viewer's lists by kind
 leave out what the cap does not allow, as its lists do. `GET /api/config`
 says `features.watchlist_kinds` where the account keeps the setting.
 

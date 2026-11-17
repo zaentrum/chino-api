@@ -131,7 +131,9 @@ paths:
             does not keep, named in values.name (the first such field, in the
             order of their names). watchlist_by_kind_invalid: a value of
             watchlist_by_kind that is neither true, false nor null. A body
-            that is no JSON object is answered "bad json", as plain text.
+            that is no JSON object, names a field twice, has more than white
+            space after the object, or is longer than 4096 bytes is answered
+            "bad json", as plain text.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SettingRefusal" }
@@ -144,6 +146,14 @@ paths:
               schema: { type: string, example: bad json }
         "401":
           description: No bearer, or one that is not valid
+        "404":
+          description: >-
+            A server without a database, which keeps nothing (its /api/config
+            says features.watchlist_kinds false): "list not found", as plain
+            text, as creating, renaming or deleting a list is answered there.
+          content:
+            text/plain:
+              schema: { type: string, example: list not found }
   /v1/me/available:
     post:
       summary: Which of the titles a client keeps the viewer may watch now
@@ -431,7 +441,8 @@ paths:
       description: >-
         Default list first, then others by createdAt ascending. With
         include=counts, each list has counts, its titles by kind, which add
-        up to its itemCount; the kinds are the catalog's.
+        up to its itemCount; the kinds are the catalog's, and a title whose
+        kind the catalog did not say for the request is counted under series.
       security: [{ bearerAuth: [] }]
       parameters:
         - in: query
@@ -439,8 +450,8 @@ paths:
           required: false
           schema: { type: string, example: counts }
           description: >-
-            comma-separated; counts adds each list's counts by kind. A token
-            this server does not know is passed over.
+            comma-separated, given once; counts adds each list's counts by
+            kind. A token this server does not know is passed over.
       responses:
         "200":
           description: OK
@@ -452,10 +463,15 @@ paths:
                   lists:
                     type: array
                     items: { $ref: "#/components/schemas/Watchlist" }
+        "400":
+          description: >-
+            include given twice ("include is given once"), or a query that
+            does not parse, a pair with a semicolon or a bad escape ("bad
+            query"), as plain text
         "401":
           description: Unauthorized
         "502":
-          description: The catalog could not say what a capped viewer may be served, or, with include=counts, the kinds of the titles
+          description: The catalog could not say what a capped viewer may be served, or, with include=counts, the kind of any of the titles
     post:
       summary: Create a new named watchlist
       security: [{ bearerAuth: [] }]
@@ -513,7 +529,8 @@ paths:
         Items newest-added first. With kind, the items of that kind alone,
         in the same order: movie its movies; series everything else, its
         series, its episodes and any other kind, so that the two hold all of
-        the list. The kinds are the catalog's.
+        the list. The kinds are the catalog's; a title whose kind the catalog
+        did not say for the request goes with series.
       security: [{ bearerAuth: [] }]
       parameters:
         - in: path
@@ -539,11 +556,14 @@ paths:
                     type: array
                     items: { type: string }
         "400":
-          description: A kind that is neither movie nor series
+          description: >-
+            A kind that is neither movie nor series, or kind given twice
+            ("kind is movie or series"), or a query that does not parse, a
+            pair with a semicolon or a bad escape ("bad query"), as plain text
         "404":
           description: Not the caller's list
         "502":
-          description: The catalog could not say what a capped viewer may be served, or, with kind, the kinds of the titles
+          description: The catalog could not say what a capped viewer may be served, or, with kind, the kind of any of the titles
     patch:
       summary: Rename a list
       description: Renaming the default list keeps isDefault=true.

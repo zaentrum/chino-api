@@ -48,8 +48,8 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 	// Unauthenticated, CORS-open discovery doc so a neutral self-host
 	// client that knows only the server URL can learn the OIDC issuer +
 	// public client ids and bootstrap sign-in. See appconfig.go. Its
-	// features.watchlist_kinds holds with a database, where the account
-	// keeps its settings.
+	// features.watchlist_kinds holds with a database and sign-in on, where
+	// the account keeps its settings.
 	r.Get("/api/config", appConfig(cfg, st != nil))
 
 	// Prometheus scrape target — un-authed because the chino-api Service

@@ -15,7 +15,8 @@ import (
 // here are the PUBLIC (no-secret) clients the operator must register in
 // their IdP with the device-authorization grant + offline_access enabled.
 // keepsSettings is whether this server keeps an account's settings: it has
-// a database.
+// a database. With sign-in off (OIDC_ENABLED=false) a request has no
+// account, and it keeps them for nobody.
 func appConfig(cfg config.Config, keepsSettings bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Non-secret + identical for every caller, so open CORS and a
@@ -43,12 +44,12 @@ func appConfig(cfg config.Config, keepsSettings bool) http.HandlerFunc {
 			// show movies and shows apart (GET and PATCH
 			// /api/v1/me/settings, watchlist_by_kind), and a list is
 			// answered by kind (?kind=, ?include=counts); without a
-			// database nothing is kept, and a client leaves the setting
-			// out.
+			// database, or with sign-in off, nothing is kept, and a client
+			// leaves the setting out.
 			"features": map[string]bool{
 				"feedback":        feedbackEnabled(cfg),
 				"downloads":       cfg.DownloadsEnabled,
-				"watchlist_kinds": keepsSettings,
+				"watchlist_kinds": keepsSettings && cfg.OIDCEnabled,
 			},
 		})
 	}

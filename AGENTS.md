@@ -30,20 +30,21 @@ says.
 
 ```sh
 go vet ./...
-CHINO_API_TEST_DATABASE_URL='postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable' go test ./...
+CHINO_API_TEST_DATABASE_URL='postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable' go test -race ./...
 ```
 
 The workflow `.github/workflows/build.yml` runs `go build ./...`,
-`go vet ./...` and `go test ./...` on every pull request and on main, with a
+`go vet ./...` and `go test -race ./...` on every pull request and on main, with a
 throwaway PostgreSQL 16 for the tests that need one. The tests
 of what chino-api keeps (progress, watched, finished titles, Continue
 Watching, account deletion, a capped viewer's lists, the account's settings,
-lists by kind: 17 of the 118) need a
+lists by kind: 17 of the 127) need a
 PostgreSQL in which they may create and drop schemas, named by
 `CHINO_API_TEST_DATABASE_URL`; each works in a schema of its own and drops it.
-Without it they are skipped. Every other service is a fake the tests start
-with `httptest`: katalog-api, chino-stream, katalog-manager, portal-api and
-the OIDC issuer.
+Without it they are skipped, and where `CI` is set (GitHub's runners set it)
+they fail, so that the workflow cannot pass without them. Every other
+service is a fake the tests start with `httptest`: katalog-api,
+chino-stream, katalog-manager, portal-api and the OIDC issuer.
 
 ## Run it
 

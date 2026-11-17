@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/zaentrum/chino-api/internal/config"
+	"github.com/zaentrum/chino-api/internal/eventsse"
 )
 
 const settingsRoute = "/api/v1/me/settings"
@@ -39,7 +40,7 @@ func checkSettings(t *testing.T, h http.Handler, header http.Header, cases []set
 			t.Errorf("%s: %d %q, want %d %q", c.name, w.Code, w.Body, c.code, c.want)
 		}
 		wantType := "application/json"
-		if strings.HasPrefix(c.want, "bad json") {
+		if !strings.HasPrefix(c.want, "{") {
 			wantType = "text/plain; charset=utf-8"
 		}
 		if got := w.Header().Get("Content-Type"); got != wantType {
@@ -51,8 +52,11 @@ func checkSettings(t *testing.T, h http.Handler, header http.Header, cases []set
 // What the store refuses, it refuses whether or not a database keeps
 // anything: a field it does not keep, by its name, the first by name of
 // several; a value of watchlist_by_kind that is no boolean and no null; and
-// a body that is no JSON object, as plain text. Without a database the
-// settings are the first values, and a change keeps nothing.
+// a body that is no JSON object - one that names a field twice, or has more
+// after the object, among them, past the bound of what is read too - as
+// plain text. Without a database the settings are the first values, and a
+// change the store takes is answered as creating, renaming or deleting a
+// list is then: 404 "list not found".
 func Test16C25TheSettingsStoreRefusesWhatItDoesNotKeep(t *testing.T) {
 	is := newIssuer(t)
 	h := filesRouter(t, is, "http://katalog-api.invalid", nil)
@@ -77,9 +81,30 @@ func Test16C25TheSettingsStoreRefusesWhatItDoesNotKeep(t *testing.T) {
 		{"no object: a string", http.MethodPatch, `"watchlist_by_kind"`, http.StatusBadRequest, "bad json\n"},
 		{"no object: nothing", http.MethodPatch, ``, http.StatusBadRequest, "bad json\n"},
 		{"no object: cut short", http.MethodPatch, `{"watchlist_by_kind":`, http.StatusBadRequest, "bad json\n"},
+		{"a field named twice", http.MethodPatch, `{"watchlist_by_kind":"x","watchlist_by_kind":true}`, http.StatusBadRequest, "bad json\n"},
+		{"a field named twice, both values taken", http.MethodPatch, `{"watchlist_by_kind":true,"watchlist_by_kind":false}`,
+			http.StatusBadRequest, "bad json\n"},
+		{"a field named twice, once with its underscore escaped", http.MethodPatch,
+			`{"watchlist_by_kind":true,"watchlist` + "\\" + `u005fby_kind":true}`, http.StatusBadRequest, "bad json\n"},
+		{"text after the object", http.MethodPatch, `{"watchlist_by_kind":true} and more`, http.StatusBadRequest, "bad json\n"},
+		{"a second object", http.MethodPatch, `{"watchlist_by_kind":true}{"watchlist_by_kind":false}`, http.StatusBadRequest, "bad json\n"},
+		{"text after the object, past the bound", http.MethodPatch, `{"watchlist_by_kind":true}` + strings.Repeat(" ", maxSettingsBody) + `and more`,
+			http.StatusBadRequest, "bad json\n"},
+		{"a second object naming the field again, past the bound", http.MethodPatch,
+			`{"watchlist_by_kind":true}` + strings.Repeat(" ", maxSettingsBody) + `{"watchlist_by_kind":false}`, http.StatusBadRequest, "bad json\n"},
+		{"an object longer than the bound", http.MethodPatch, `{"watchlist_by_kind":true` + strings.Repeat(" ", maxSettingsBody) + `}`,
+			http.StatusBadRequest, "bad json\n"},
 		{"without a database, at first", http.MethodGet, ``, http.StatusOK, settingsOff},
-		{"without a database, nothing is kept", http.MethodPatch, `{"watchlist_by_kind":true}`, http.StatusOK, settingsOff},
+		{"without a database, nothing is kept", http.MethodPatch, `{"watchlist_by_kind":true}`, http.StatusNotFound, "list not found\n"},
+		{"without a database, white space after the object", http.MethodPatch, "{\"watchlist_by_kind\":false}\n\t ",
+			http.StatusNotFound, "list not found\n"},
+		{"without a database, a change of nothing", http.MethodPatch, `{}`, http.StatusNotFound, "list not found\n"},
+		{"without a database, still at first", http.MethodGet, ``, http.StatusOK, settingsOff},
 	})
+	// As creating a list is answered without a database.
+	if w := send(h, http.MethodPost, "/api/v1/me/watchlists", bearer, `{"name":"Rainy days"}`); w.Code != http.StatusNotFound || w.Body.String() != "list not found\n" {
+		t.Errorf("a list's change without a database: %d %q", w.Code, w.Body)
+	}
 	for _, method := range []string{http.MethodGet, http.MethodPatch} {
 		if w := send(h, method, settingsRoute, nil, `{"watchlist_by_kind":true}`); w.Code != http.StatusUnauthorized {
 			t.Errorf("%s without a bearer: %d", method, w.Code)
@@ -107,7 +132,10 @@ func Test16C25TheAccountKeepsWhetherListsShowMoviesAndShowsApart(t *testing.T) {
 			`{"error":"setting_unknown","values":{"name":"zoom"},"detail":"the settings store keeps no such field"}` + "\n"},
 		{"a value refused", http.MethodPatch, `{"watchlist_by_kind":"off"}`, http.StatusBadRequest, byKindInvalid},
 		{"no object", http.MethodPatch, `[false]`, http.StatusBadRequest, "bad json\n"},
+		{"off, named twice", http.MethodPatch, `{"watchlist_by_kind":false,"watchlist_by_kind":false}`, http.StatusBadRequest, "bad json\n"},
+		{"off, with text after it", http.MethodPatch, `{"watchlist_by_kind":false},`, http.StatusBadRequest, "bad json\n"},
 		{"still on", http.MethodGet, ``, http.StatusOK, settingsByKind},
+		{"on, with white space after it", http.MethodPatch, "{\"watchlist_by_kind\":true}\r\n", http.StatusOK, settingsByKind},
 		{"off", http.MethodPatch, `{"watchlist_by_kind":false}`, http.StatusOK, settingsOff},
 		{"kept off", http.MethodGet, ``, http.StatusOK, settingsOff},
 		{"on again", http.MethodPatch, `{"watchlist_by_kind":true}`, http.StatusOK, settingsByKind},
@@ -118,9 +146,21 @@ func Test16C25TheAccountKeepsWhetherListsShowMoviesAndShowsApart(t *testing.T) {
 	checkSettings(t, h, bearerWith(t, is, "viewer-2", nil), []settingsCase{
 		{"another person's", http.MethodGet, ``, http.StatusOK, settingsOff},
 	})
-	// A server that keeps the setting says so.
+	// A server that keeps the setting says so; with sign-in off it keeps it
+	// for nobody, and says not.
 	if f := featuresOf(t, do(h, http.MethodGet, "/api/config", nil)); !f["watchlist_kinds"] {
 		t.Error("with a database: features.watchlist_kinds = false")
+	}
+	off, err := NewRouter(config.Config{OIDCEnabled: false, KatalogBaseURL: "http://katalog-api.invalid",
+		StreamSigningKey: signingKey}, st, eventsse.NewBroker())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := featuresOf(t, do(off, http.MethodGet, "/api/config", nil)); f["watchlist_kinds"] {
+		t.Error("with a database and sign-in off: features.watchlist_kinds = true")
+	}
+	if w := send(off, http.MethodPatch, settingsRoute, nil, `{"watchlist_by_kind":true}`); w.Code != http.StatusUnauthorized {
+		t.Errorf("with sign-in off, a change: %d %q", w.Code, w.Body)
 	}
 }
 
@@ -159,18 +199,20 @@ func Test16C25TheSettingsGoWithTheAccount(t *testing.T) {
 }
 
 // features.watchlist_kinds is true exactly where the account keeps its
-// settings: on a server with a database (the Postgres test below says the
-// other half).
+// settings: on a server with a database and sign-in on (the Postgres test
+// above says the other half).
 func Test8C18AppConfigSaysWhetherListsComeByKind(t *testing.T) {
 	for _, keeps := range []bool{true, false} {
-		w := httptest.NewRecorder()
-		appConfig(config.Config{OpenProjectToken: "a-token"}, keeps)(w, httptest.NewRequest(http.MethodGet, "/api/config", nil))
-		f := featuresOf(t, w)
-		if got, ok := f["watchlist_kinds"]; !ok || got != keeps {
-			t.Errorf("keeps settings %v: features.watchlist_kinds = %v (present %v)", keeps, got, ok)
-		}
-		if !f["feedback"] {
-			t.Errorf("keeps settings %v: features.feedback = false, want true", keeps)
+		for _, signIn := range []bool{true, false} {
+			w := httptest.NewRecorder()
+			appConfig(config.Config{OpenProjectToken: "a-token", OIDCEnabled: signIn}, keeps)(w, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+			f := featuresOf(t, w)
+			if got, ok := f["watchlist_kinds"]; !ok || got != (keeps && signIn) {
+				t.Errorf("keeps settings %v, sign-in %v: features.watchlist_kinds = %v (present %v)", keeps, signIn, got, ok)
+			}
+			if !f["feedback"] {
+				t.Errorf("keeps settings %v, sign-in %v: features.feedback = false, want true", keeps, signIn)
+			}
 		}
 	}
 

@@ -12,7 +12,8 @@ import (
 )
 
 // testDatabase names the PostgreSQL the store's tests use, as chino-api's
-// other tests of its lists do; skipped without it.
+// other tests of its lists do; skipped without it, and failed without it
+// where CI is set.
 const testDatabase = "CHINO_API_TEST_DATABASE_URL"
 
 // testStore is chino-api's store, migrated, in a schema of its own on the
@@ -21,6 +22,9 @@ func testStore(t *testing.T) *Store {
 	t.Helper()
 	dsn := os.Getenv(testDatabase)
 	if dsn == "" {
+		if os.Getenv("CI") != "" {
+			t.Fatalf("CI is set and %s is not: the store's tests would not run", testDatabase)
+		}
 		t.Skipf("set %s to run the store's tests", testDatabase)
 	}
 	ctx := context.Background()

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,8 +35,9 @@ const subtitleTTL = 10 * time.Minute
 // (katalog-api takes 500).
 const visibleBatch = 200
 
-// maxAnswers bounds what is kept; once it is full, what expired goes, and if
-// nothing has, everything.
+// maxAnswers bounds what is kept of one kind of answer; once it is full, what
+// expired goes, and if nothing has, the tenth that expires first: of answers
+// kept for the same time, the oldest.
 const maxAnswers = 20000
 
 // answers are katalog-api's answers, kept for a while.
@@ -46,6 +48,12 @@ type answers struct {
 	font     map[string]answer // font id -> its title's id (answer.item)
 	file     map[string]answer // "<cap>|<id>" -> the episodes of its file (answer.items, files.go)
 	kind     map[string]answer // "<cap>|<id>" -> the title's kind (answer.item, kinds.go)
+	// kindFailed is "<cap>|<id>" of a title katalog-api failed to say the
+	// kind of, for the order in which Kinds asks alone (kinds.go).
+	kindFailed map[string]answer
+	// kindAsks are the requests for a title's kind out at katalog-api,
+	// "<cap>|<id>" -> the one request for it (kinds.go).
+	kindAsks map[string]*kindAsk
 }
 
 type answer struct {
@@ -55,7 +63,8 @@ type answer struct {
 	until   time.Time
 }
 
-// keep stores a in m under k, making room first when m is full.
+// keep stores a in m under k, making room first when m is full: what expired
+// goes, and if nothing has, the tenth of m that expires first.
 func keep(m map[string]answer, k string, a answer, now time.Time) {
 	if len(m) >= maxAnswers {
 		for key, old := range m {
@@ -64,7 +73,17 @@ func keep(m map[string]answer, k string, a answer, now time.Time) {
 			}
 		}
 		if len(m) >= maxAnswers {
-			clear(m)
+			untils := make([]time.Time, 0, len(m))
+			for _, old := range m {
+				untils = append(untils, old.until)
+			}
+			slices.SortFunc(untils, time.Time.Compare)
+			last := untils[len(untils)/10]
+			for key, old := range m {
+				if !old.until.After(last) {
+					delete(m, key)
+				}
+			}
 		}
 	}
 	m[k] = a

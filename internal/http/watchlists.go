@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -46,7 +47,8 @@ type watchlistJSON struct {
 // A list by kind: its movies, and its shows. A movie goes with the movies;
 // a series, an episode saved on its own and anything else a list could hold
 // go with the shows, under series, so that nothing a list holds is left out
-// - an id katalog-api serves no title of too. The kind of each title is
+// - an id katalog-api serves no title of too, and, for the one answer, a
+// title whose kind katalog-api did not say for it. The kind of each title is
 // katalog-api's (katalog.Client.Kinds).
 const (
 	kindMovie  = "movie"
@@ -68,11 +70,50 @@ type kindCounts struct {
 	Series int `json:"series"`
 }
 
-// kindsUnavailable answers a list whose titles' kinds katalog-api could not
-// say: 502, and nothing of the list.
+// kindsUnavailable answers a list whose titles' kinds katalog-api could say
+// none of: 502, and nothing of the list.
 func kindsUnavailable(w http.ResponseWriter, err error) {
 	log.Printf("chino-api: the kinds of a list's titles could not be asked: %v", err)
 	http.Error(w, "catalog unavailable", http.StatusBadGateway)
+}
+
+// kindsOf is the kind katalog-api gives each of ids (katalog.Client.Kinds),
+// for the viewer of r. One it did not say is not in it, and goes with the
+// shows (listKind); where it said none, kindsOf answers 502 and is false.
+func kindsOf(w http.ResponseWriter, r *http.Request, kc *katalog.Client, ids []string) (map[string]string, bool) {
+	kinds, err := kc.Kinds(r.Context(), bearerFrom(r), ids)
+	if err != nil {
+		kindsUnavailable(w, err)
+		return nil, false
+	}
+	unsaid := map[string]bool{}
+	for _, id := range ids {
+		if _, said := kinds[id]; !said {
+			unsaid[id] = true
+		}
+	}
+	if len(unsaid) > 0 {
+		log.Printf("chino-api: katalog-api did not say the kind of %d of a list's titles; they go with the shows in this answer", len(unsaid))
+	}
+	return kinds, true
+}
+
+// once reports whether r's query parses and gives name at most once. A query
+// that does not parse (a pair with a semicolon, a bad escape), which
+// r.URL.Query would answer without the pairs it cannot read, once answers
+// "bad query"; one that gives name more often, refused: each a 400 of plain
+// text.
+func once(w http.ResponseWriter, r *http.Request, name, refused string) bool {
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	switch {
+	case err != nil:
+		http.Error(w, "bad query", http.StatusBadRequest)
+	case len(q[name]) > 1:
+		http.Error(w, refused, http.StatusBadRequest)
+	default:
+		return true
+	}
+	return false
 }
 
 // includes reports whether r's include parameter, a comma-separated list,
@@ -131,12 +172,15 @@ func listError(w http.ResponseWriter, err error) bool {
 // by createdAt asc (ordering enforced in the store query). A capped viewer's
 // itemCount counts the titles of the list its cap allows. With
 // include=counts, each list has counts, its titles by kind:
-// {"movie": 4, "series": 3}.
+// {"movie": 4, "series": 3}. include given twice is 400.
 func listWatchlists(st *store.Store, g gate, kc *katalog.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := auth.SubjectFromContext(r.Context())
 		if userID == "" {
 			http.Error(w, "no subject", http.StatusUnauthorized)
+			return
+		}
+		if !once(w, r, "include", "include is given once") {
 			return
 		}
 		rows, err := st.ListWatchlists(r.Context(), userID)
@@ -166,8 +210,8 @@ func listWatchlists(st *store.Store, g gate, kc *katalog.Client) http.HandlerFun
 			}
 			var kinds map[string]string
 			if withCounts {
-				if kinds, err = kc.Kinds(r.Context(), bearerFrom(r), allowed); err != nil {
-					kindsUnavailable(w, err)
+				var ok bool
+				if kinds, ok = kindsOf(w, r, kc, allowed); !ok {
 					return
 				}
 				counts = make(map[string]*kindCounts, len(rows))
@@ -282,11 +326,15 @@ func deleteWatchlist(st *store.Store) http.HandlerFunc {
 // plus its item ids (newest-added first), a capped viewer's those its cap
 // allows. 404 if not the caller's. With kind=movie, its movies alone; with
 // kind=series, everything else (its series, its episodes, any other kind).
+// Another kind, or kind given twice, is 400.
 func getWatchlist(st *store.Store, g gate, kc *katalog.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := auth.SubjectFromContext(r.Context())
 		if userID == "" {
 			http.Error(w, "no subject", http.StatusUnauthorized)
+			return
+		}
+		if !once(w, r, "kind", "kind is movie or series") {
 			return
 		}
 		kind := r.URL.Query().Get("kind")
@@ -309,9 +357,8 @@ func getWatchlist(st *store.Store, g gate, kc *katalog.Client) http.HandlerFunc 
 			return
 		}
 		if kind != "" {
-			kinds, err := kc.Kinds(r.Context(), bearerFrom(r), ids)
-			if err != nil {
-				kindsUnavailable(w, err)
+			kinds, ok := kindsOf(w, r, kc, ids)
+			if !ok {
 				return
 			}
 			ids = slices.DeleteFunc(ids, func(id string) bool { return listKind(kinds[id]) != kind })

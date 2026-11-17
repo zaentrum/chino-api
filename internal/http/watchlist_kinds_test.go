@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -94,6 +96,9 @@ func Test8C18AListComesByKind(t *testing.T) {
 		{"adult-2", nil, "?kind=film", http.StatusBadRequest, "kind is movie or series\n"},
 		{"adult-2", nil, "?kind=Movie", http.StatusBadRequest, "kind is movie or series\n"},
 		{"adult-2", nil, "?kind=episode", http.StatusBadRequest, "kind is movie or series\n"},
+		{"adult-2", nil, "?kind=movie&kind=series", http.StatusBadRequest, "kind is movie or series\n"},
+		{"adult-2", nil, "?kind=movie&kind=movie", http.StatusBadRequest, "kind is movie or series\n"},
+		{"adult-2", nil, "?kind=&kind=movie", http.StatusBadRequest, "kind is movie or series\n"},
 		{"kid-2", 12, "?kind=movie", http.StatusOK, "kid"},
 		{"kid-2", 12, "?kind=series", http.StatusOK, "ep6 show6"},
 	} {
@@ -131,6 +136,12 @@ func Test8C18AListComesByKind(t *testing.T) {
 			t.Errorf("%s, the lists%s: counts without include=counts: %s", tc.user, tc.query, w.Body)
 		}
 	}
+	for _, query := range []string{"?include=counts&include=counts", "?include=counts&include=extras", "?include=&include=counts"} {
+		w := do(h, http.MethodGet, "/api/v1/me/watchlists"+query, bearerWith(t, is, "adult-2", nil))
+		if w.Code != http.StatusBadRequest || w.Body.String() != "include is given once\n" {
+			t.Errorf("the lists%s: %d %q, want 400", query, w.Code, w.Body)
+		}
+	}
 
 	// Asked once and kept: the same again asks katalog-api about no item.
 	katalog.take()
@@ -140,6 +151,45 @@ func Test8C18AListComesByKind(t *testing.T) {
 		if strings.Contains(r, "/api/v1/items/") {
 			t.Errorf("kept, yet katalog-api was asked %s", r)
 		}
+	}
+
+	// A katalog-api that fails for one title: the list comes by kind all the
+	// same, that title with the shows, and it is asked again the next time,
+	// the others not.
+	rated, err := url.Parse(katalog.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(rated)
+	oneFails := newRecorder(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/items/adult" {
+			http.Error(w, "the catalog is down for this title", http.StatusInternalServerError)
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	})
+	h = filesRouter(t, is, oneFails.URL, st)
+	for _, tc := range []struct{ query, want string }{
+		{"?kind=movie", "kid"},
+		{"?kind=series", "adult gone ep6 show6"},
+	} {
+		w := do(h, http.MethodGet, "/api/v1/me/watchlists/"+lists["adult-2"]+tc.query, bearerWith(t, is, "adult-2", nil))
+		if got := itemsOfList(t, w.Body.Bytes()); w.Code != http.StatusOK || got != tc.want {
+			t.Errorf("one title failing, list%s: %d %q, want %q", tc.query, w.Code, got, tc.want)
+		}
+	}
+	w := do(h, http.MethodGet, "/api/v1/me/watchlists?include=counts", bearerWith(t, is, "adult-2", nil))
+	if got, want := countsOfLists(t, w.Body.Bytes()), "Watchlist 5 movie 1 series 4; Rainy days 1 movie 0 series 1"; w.Code != http.StatusOK || got != want {
+		t.Errorf("one title failing, the lists: %d %q, want %q", w.Code, got, want)
+	}
+	asked := map[string]int{}
+	for _, r := range oneFails.take() {
+		if id, ok := strings.CutPrefix(r, "GET /api/v1/items/"); ok {
+			asked[id]++
+		}
+	}
+	if fmt.Sprint(asked) != "map[adult:3 ep6:1 gone:1 kid:1 show6:1]" {
+		t.Errorf("one title failing: asked %v, want adult each time and the others once", asked)
 	}
 
 	// A katalog-api that fails: by kind there is no answer, whole as before.
@@ -156,6 +206,35 @@ func Test8C18AListComesByKind(t *testing.T) {
 	} {
 		if w := do(h, http.MethodGet, path, adult); w.Code != code || (code == http.StatusBadGateway && w.Body.String() != "catalog unavailable\n") {
 			t.Errorf("a failing catalog, %s: %d %q, want %d", path, w.Code, w.Body, code)
+		}
+	}
+}
+
+// A query of the lists by kind that does not parse is refused, not read
+// without the pairs it cannot: a pair with a semicolon or a bad escape is 400
+// "bad query", on the list and on the overview, before a database is asked.
+// The same query read whole is answered as it is without a database.
+func Test8C18AQueryThatDoesNotParseIsRefused(t *testing.T) {
+	is := newIssuer(t)
+	h := filesRouter(t, is, "http://katalog-api.invalid", nil)
+	bearer := bearerWith(t, is, "viewer-1", nil)
+	for _, tc := range []struct {
+		path string
+		code int
+		want string
+	}{
+		{"/api/v1/me/watchlists/wl_1?kind=film;x=1", http.StatusBadRequest, "bad query\n"},
+		{"/api/v1/me/watchlists/wl_1?kind=film%zz", http.StatusBadRequest, "bad query\n"},
+		{"/api/v1/me/watchlists/wl_1?kind=movie;kind=film", http.StatusBadRequest, "bad query\n"},
+		{"/api/v1/me/watchlists/wl_1?x=%zz&kind=movie", http.StatusBadRequest, "bad query\n"},
+		{"/api/v1/me/watchlists?include=counts;x=1", http.StatusBadRequest, "bad query\n"},
+		{"/api/v1/me/watchlists?include=counts%zz", http.StatusBadRequest, "bad query\n"},
+		{"/api/v1/me/watchlists/wl_1?kind=movie", http.StatusNotFound, "list not found\n"},
+		{"/api/v1/me/watchlists/wl_1?kind=film", http.StatusBadRequest, "kind is movie or series\n"},
+		{"/api/v1/me/watchlists?include=counts", http.StatusOK, `{"lists":[]}` + "\n"},
+	} {
+		if w := do(h, http.MethodGet, tc.path, bearer); w.Code != tc.code || w.Body.String() != tc.want {
+			t.Errorf("%s: %d %q, want %d %q", tc.path, w.Code, w.Body, tc.code, tc.want)
 		}
 	}
 }
