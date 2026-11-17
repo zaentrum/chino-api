@@ -112,7 +112,7 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// Mints a long-lived stream token (TTL 6 h) the player
 			// uses on <video src> URLs so OIDC silent-renew can't
 			// kill the in-flight ffmpeg transcode by rotating the URL.
-			r.Post("/me/stream-token", postStreamToken(signer))
+			r.Post("/me/stream-token", postStreamToken(signer, st))
 			// Which of the titles a client keeps the viewer may watch now,
 			// in one request: the phone deletes the downloads of the others
 			// (available.go).
@@ -217,6 +217,9 @@ func NewRouter(cfg config.Config, st *store.Store, events *eventsse.Broker) (htt
 			// portal's People page, for portal-api with the account deletion
 			// token (account.go).
 			r.Delete("/admin/accounts/{sub}/data", deleteAccountData(st, admin, cfg.AccountDeletionToken))
+			// The same deletion, forgotten where portal-api then fails to
+			// delete the account itself: the person writes again at once.
+			r.Delete("/admin/accounts/{sub}/deleted", forgetDeletion(st, admin, cfg.AccountDeletionToken))
 		})
 
 		// Live catalog stream (SSE), in its OWN group — the default
@@ -395,11 +398,56 @@ const (
 
 // storeFailed answers r, whose read or write of the database failed with
 // err: the caller gets errDatabase and 500, and the failure is logged on the
-// server (logFailure).
+// server (logFailure). A refusal of the account's is answered as
+// accountRefused has it: a write, or a read of the lists, which makes the
+// default one.
 func storeFailed(w http.ResponseWriter, r *http.Request, err error) {
+	what := "a write"
+	if r.Method == http.MethodGet {
+		what = "a read of the lists"
+	}
+	if accountRefused(w, r, err, what) {
+		return
+	}
 	logFailure(r, "the database", "", err)
 	http.Error(w, errDatabase, http.StatusInternalServerError)
 }
+
+// accountRefused answers r where err is a refusal of the account's and
+// reports whether it did: one whose deletion has begun is no failure,
+// answered accountDeleted and not logged; what waited too long for that
+// deletion to end (store.ErrAccountBusy) - a write, a read of the lists, a
+// stream token, a bug report, an undo of a deletion - is answered 503
+// errAccountBusy with Retry-After accountBusyRetry, and logged once by name.
+func accountRefused(w http.ResponseWriter, r *http.Request, err error, what string) bool {
+	switch {
+	case errors.Is(err, store.ErrAccountDeleted):
+		writeJSON(w, http.StatusUnauthorized, accountDeleted)
+	case errors.Is(err, store.ErrAccountBusy):
+		log.Printf("chino-api: %s %s: %s waited on the account's deletion under way; answered 503", r.Method, logline.Route(r), what)
+		w.Header().Set("Retry-After", accountBusyRetry)
+		http.Error(w, errAccountBusy, http.StatusServiceUnavailable)
+	default:
+		return false
+	}
+	return true
+}
+
+// errAccountBusy is the answer, with 503, to a write that waited for its
+// account's deletion under way to end and gave up; accountBusyRetry, in
+// seconds, is when to send it again (Retry-After). A deletion can stay open
+// for most of a minute, so the write sent again can be busy again.
+const (
+	errAccountBusy   = "account busy"
+	accountBusyRetry = "5"
+)
+
+// accountDeleted is the answer, with 401, to a write for an account whose
+// deletion has begun (store.ErrAccountDeleted), during the deletion or
+// after it: nothing more is kept for it, and the app signs the account out.
+// A code of ADR-0023, part 4, that needs no values.
+var accountDeleted = codeAnswer{Error: "account_deleted",
+	Detail: "the account's deletion has begun: nothing more is kept for it"}
 
 // catalogFailed answers r, whose request to katalog-api failed with err: the
 // caller gets errCatalog and 502, and the failure is logged (logFailure).

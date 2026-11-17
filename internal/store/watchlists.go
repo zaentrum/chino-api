@@ -68,25 +68,34 @@ func newListID() string {
 
 // EnsureDefaultList returns the id of the user's default list, creating
 // it lazily on first access. Nil store / empty user → "" with no error.
+// ErrAccountDeleted once the account's deletion has begun (asAccount).
 func (s *Store) EnsureDefaultList(ctx context.Context, userID string) (string, error) {
 	if s == nil || s.p == nil || userID == "" {
 		return "", nil
 	}
-	id := defaultListID(userID)
-	_, err := s.p.Exec(ctx,
-		`INSERT INTO watchlists (id, user_id, name, is_default, created_at)
-		 VALUES ($1, $2, $3, true, now())
-		 ON CONFLICT (id) DO NOTHING`,
-		id, userID, defaultListName)
+	err := s.asAccount(ctx, userID, func(tx pgx.Tx) error {
+		return ensureDefaultList(ctx, tx, userID)
+	})
 	if err != nil {
 		return "", err
 	}
-	return id, nil
+	return defaultListID(userID), nil
+}
+
+// ensureDefaultList writes userID's default list on q where it has none.
+func ensureDefaultList(ctx context.Context, q querier, userID string) error {
+	_, err := q.Exec(ctx,
+		`INSERT INTO watchlists (id, user_id, name, is_default, created_at)
+		 VALUES ($1, $2, $3, true, now())
+		 ON CONFLICT (id) DO NOTHING`,
+		defaultListID(userID), userID, defaultListName)
+	return err
 }
 
 // ListWatchlists returns the user's lists, default first then the rest by
 // createdAt ascending, each with its current item count. Ensures the
-// default exists first so even a brand-new user gets exactly one row.
+// default exists first so even a brand-new user gets exactly one row; so
+// ErrAccountDeleted once the account's deletion has begun.
 func (s *Store) ListWatchlists(ctx context.Context, userID string) ([]WatchlistRow, error) {
 	if s == nil || s.p == nil || userID == "" {
 		return nil, nil
@@ -125,8 +134,13 @@ func (s *Store) GetWatchlist(ctx context.Context, userID, listID string) (Watchl
 	if s == nil || s.p == nil || userID == "" || listID == "" {
 		return WatchlistRow{}, ErrListNotFound
 	}
+	return getWatchlist(ctx, s.p, userID, listID)
+}
+
+// getWatchlist is GetWatchlist, read on q.
+func getWatchlist(ctx context.Context, q querier, userID, listID string) (WatchlistRow, error) {
 	var r WatchlistRow
-	err := s.p.QueryRow(ctx,
+	err := q.QueryRow(ctx,
 		`SELECT id, name, is_default, created_at
 		 FROM watchlists WHERE id = $1 AND user_id = $2`,
 		listID, userID).Scan(&r.ID, &r.Name, &r.IsDefault, &r.CreatedAt)
@@ -142,36 +156,39 @@ func (s *Store) GetWatchlist(ctx context.Context, userID, listID string) (Watchl
 // CreateWatchlist makes a new (non-default) list after validating the
 // per-user cap and case-insensitive name uniqueness. Name is assumed
 // already trimmed/length-checked by the handler. Returns the new row.
+// ErrAccountDeleted once the account's deletion has begun (asAccount).
 func (s *Store) CreateWatchlist(ctx context.Context, userID, name string) (WatchlistRow, error) {
 	if s == nil || s.p == nil || userID == "" {
 		return WatchlistRow{}, ErrListNotFound
 	}
-	// Make sure the default exists so it counts toward the cap and the
-	// user always has at least one list.
-	if _, err := s.EnsureDefaultList(ctx, userID); err != nil {
-		return WatchlistRow{}, err
-	}
-	var count int
-	if err := s.p.QueryRow(ctx,
-		`SELECT COUNT(*) FROM watchlists WHERE user_id = $1`, userID).Scan(&count); err != nil {
-		return WatchlistRow{}, err
-	}
-	if count >= maxListsPerUser {
-		return WatchlistRow{}, ErrListLimit
-	}
-	dup, err := s.nameExists(ctx, userID, name, "")
-	if err != nil {
-		return WatchlistRow{}, err
-	}
-	if dup {
-		return WatchlistRow{}, ErrDuplicateName
-	}
 	r := WatchlistRow{ID: newListID(), Name: name, IsDefault: false}
-	err = s.p.QueryRow(ctx,
-		`INSERT INTO watchlists (id, user_id, name, is_default, created_at)
-		 VALUES ($1, $2, $3, false, now())
-		 RETURNING created_at`,
-		r.ID, userID, name).Scan(&r.CreatedAt)
+	err := s.asAccount(ctx, userID, func(tx pgx.Tx) error {
+		// Make sure the default exists so it counts toward the cap and the
+		// user always has at least one list.
+		if err := ensureDefaultList(ctx, tx, userID); err != nil {
+			return err
+		}
+		var count int
+		if err := tx.QueryRow(ctx,
+			`SELECT COUNT(*) FROM watchlists WHERE user_id = $1`, userID).Scan(&count); err != nil {
+			return err
+		}
+		if count >= maxListsPerUser {
+			return ErrListLimit
+		}
+		dup, err := nameExists(ctx, tx, userID, name, "")
+		if err != nil {
+			return err
+		}
+		if dup {
+			return ErrDuplicateName
+		}
+		return tx.QueryRow(ctx,
+			`INSERT INTO watchlists (id, user_id, name, is_default, created_at)
+			 VALUES ($1, $2, $3, false, now())
+			 RETURNING created_at`,
+			r.ID, userID, name).Scan(&r.CreatedAt)
+	})
 	if err != nil {
 		return WatchlistRow{}, err
 	}
@@ -180,27 +197,32 @@ func (s *Store) CreateWatchlist(ctx context.Context, userID, name string) (Watch
 
 // RenameWatchlist renames the caller's list (default included — the
 // is_default flag is untouched). Enforces the same name validation as
-// create. ErrListNotFound when it isn't the caller's.
+// create. ErrListNotFound when it isn't the caller's. ErrAccountDeleted once
+// the account's deletion has begun (asAccount), before the list is looked at.
 func (s *Store) RenameWatchlist(ctx context.Context, userID, listID, name string) (WatchlistRow, error) {
 	if s == nil || s.p == nil || userID == "" || listID == "" {
 		return WatchlistRow{}, ErrListNotFound
 	}
-	// Confirm ownership first so a duplicate-name 409 can't leak the
-	// existence of someone else's list.
-	cur, err := s.GetWatchlist(ctx, userID, listID)
-	if err != nil {
-		return WatchlistRow{}, err
-	}
-	dup, err := s.nameExists(ctx, userID, name, listID)
-	if err != nil {
-		return WatchlistRow{}, err
-	}
-	if dup {
-		return WatchlistRow{}, ErrDuplicateName
-	}
-	_, err = s.p.Exec(ctx,
-		`UPDATE watchlists SET name = $1 WHERE id = $2 AND user_id = $3`,
-		name, listID, userID)
+	var cur WatchlistRow
+	err := s.asAccount(ctx, userID, func(tx pgx.Tx) error {
+		// Confirm ownership first so a duplicate-name 409 can't leak the
+		// existence of someone else's list.
+		var err error
+		if cur, err = getWatchlist(ctx, tx, userID, listID); err != nil {
+			return err
+		}
+		dup, err := nameExists(ctx, tx, userID, name, listID)
+		if err != nil {
+			return err
+		}
+		if dup {
+			return ErrDuplicateName
+		}
+		_, err = tx.Exec(ctx,
+			`UPDATE watchlists SET name = $1 WHERE id = $2 AND user_id = $3`,
+			name, listID, userID)
+		return err
+	})
 	if err != nil {
 		return WatchlistRow{}, err
 	}
@@ -211,20 +233,24 @@ func (s *Store) RenameWatchlist(ctx context.Context, userID, listID, name string
 // DeleteWatchlist removes a list and (via ON DELETE CASCADE) its items.
 // The default list can't be deleted. ErrListNotFound when it isn't the
 // caller's; ErrCannotDeleteDefault when targeting the default.
+// ErrAccountDeleted once the account's deletion has begun (asAccount),
+// before the list is looked at.
 func (s *Store) DeleteWatchlist(ctx context.Context, userID, listID string) error {
 	if s == nil || s.p == nil || userID == "" || listID == "" {
 		return ErrListNotFound
 	}
-	cur, err := s.GetWatchlist(ctx, userID, listID)
-	if err != nil {
+	return s.asAccount(ctx, userID, func(tx pgx.Tx) error {
+		cur, err := getWatchlist(ctx, tx, userID, listID)
+		if err != nil {
+			return err
+		}
+		if cur.IsDefault {
+			return ErrCannotDeleteDefault
+		}
+		_, err = tx.Exec(ctx,
+			`DELETE FROM watchlists WHERE id = $1 AND user_id = $2`, listID, userID)
 		return err
-	}
-	if cur.IsDefault {
-		return ErrCannotDeleteDefault
-	}
-	_, err = s.p.Exec(ctx,
-		`DELETE FROM watchlists WHERE id = $1 AND user_id = $2`, listID, userID)
-	return err
+	})
 }
 
 // GetWatchlistItems returns the item ids in a list, newest-added first.
@@ -283,44 +309,50 @@ func (s *Store) WatchlistItemsByList(ctx context.Context, userID string) (map[st
 
 // AddWatchlistItem idempotently adds an item to one of the caller's
 // lists. ErrListNotFound when the list isn't the caller's. Idempotent —
-// re-adding is a no-op.
+// re-adding is a no-op. ErrAccountDeleted once the account's deletion has
+// begun (asAccount), before the list is looked at.
 func (s *Store) AddWatchlistItem(ctx context.Context, userID, listID, itemID string) error {
 	if s == nil || s.p == nil || userID == "" || listID == "" || itemID == "" {
 		return nil
 	}
-	owns, err := s.ownsList(ctx, userID, listID)
-	if err != nil {
+	return s.asAccount(ctx, userID, func(tx pgx.Tx) error {
+		owns, err := ownsList(ctx, tx, userID, listID)
+		if err != nil {
+			return err
+		}
+		if !owns {
+			return ErrListNotFound
+		}
+		_, err = tx.Exec(ctx,
+			`INSERT INTO watchlist_items (list_id, item_id, added_at)
+			 VALUES ($1, $2, now())
+			 ON CONFLICT (list_id, item_id) DO NOTHING`,
+			listID, itemID)
 		return err
-	}
-	if !owns {
-		return ErrListNotFound
-	}
-	_, err = s.p.Exec(ctx,
-		`INSERT INTO watchlist_items (list_id, item_id, added_at)
-		 VALUES ($1, $2, now())
-		 ON CONFLICT (list_id, item_id) DO NOTHING`,
-		listID, itemID)
-	return err
+	})
 }
 
 // RemoveWatchlistItem idempotently drops an item from one of the caller's
 // lists. ErrListNotFound when the list isn't the caller's. Deleting an
-// absent membership is a no-op.
+// absent membership is a no-op. ErrAccountDeleted once the account's
+// deletion has begun (asAccount), before the list is looked at.
 func (s *Store) RemoveWatchlistItem(ctx context.Context, userID, listID, itemID string) error {
 	if s == nil || s.p == nil || userID == "" || listID == "" || itemID == "" {
 		return nil
 	}
-	owns, err := s.ownsList(ctx, userID, listID)
-	if err != nil {
+	return s.asAccount(ctx, userID, func(tx pgx.Tx) error {
+		owns, err := ownsList(ctx, tx, userID, listID)
+		if err != nil {
+			return err
+		}
+		if !owns {
+			return ErrListNotFound
+		}
+		_, err = tx.Exec(ctx,
+			`DELETE FROM watchlist_items WHERE list_id = $1 AND item_id = $2`,
+			listID, itemID)
 		return err
-	}
-	if !owns {
-		return ErrListNotFound
-	}
-	_, err = s.p.Exec(ctx,
-		`DELETE FROM watchlist_items WHERE list_id = $1 AND item_id = $2`,
-		listID, itemID)
-	return err
+	})
 }
 
 // ListMemberships maps each requested item id to the list ids (among the
@@ -352,22 +384,23 @@ func (s *Store) ListMemberships(ctx context.Context, userID string, itemIDs []st
 	return out, rows.Err()
 }
 
-// ownsList reports whether listID belongs to userID. The ownership-check
-// helper every mutating items endpoint goes through.
-func (s *Store) ownsList(ctx context.Context, userID, listID string) (bool, error) {
+// ownsList reports whether listID belongs to userID, read on q. The
+// ownership-check helper every mutating items endpoint goes through.
+func ownsList(ctx context.Context, q querier, userID, listID string) (bool, error) {
 	var exists bool
-	err := s.p.QueryRow(ctx,
+	err := q.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM watchlists WHERE id = $1 AND user_id = $2)`,
 		listID, userID).Scan(&exists)
 	return exists, err
 }
 
 // nameExists reports whether the user already has a list whose name
-// matches case-insensitively. excludeID skips a list id (used by rename
-// so renaming to the same name with different casing isn't a false dup).
-func (s *Store) nameExists(ctx context.Context, userID, name, excludeID string) (bool, error) {
+// matches case-insensitively, read on q. excludeID skips a list id (used by
+// rename so renaming to the same name with different casing isn't a false
+// dup).
+func nameExists(ctx context.Context, q querier, userID, name, excludeID string) (bool, error) {
 	var exists bool
-	err := s.p.QueryRow(ctx,
+	err := q.QueryRow(ctx,
 		`SELECT EXISTS(
 		   SELECT 1 FROM watchlists
 		   WHERE user_id = $1 AND lower(name) = lower($2) AND id <> $3)`,

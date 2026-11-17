@@ -52,6 +52,7 @@ and rendered from `internal/http/openapi.yaml`. Highlights:
 | `POST /api/v1/admin/items/{id}/package` | bearer JWT with the admin role | an item's packaging, forwarded to katalog-manager with the bearer |
 | `GET /api/v1/admin/items/{id}/package` | bearer JWT with the admin role | the item's processing steps, from katalog-manager |
 | `DELETE /api/v1/admin/accounts/{sub}/data` | bearer JWT with the admin role and the account deletion token | what chino keeps of an account an admin deletes on the portal's People page, for portal-api |
+| `DELETE /api/v1/admin/accounts/{sub}/deleted?deletion=…` | bearer JWT with the admin role and the account deletion token | that deletion, forgotten, where portal-api then cannot delete the account: the person writes again at once ([below](#deleting-an-account)) |
 | `GET /api/v1/items/{id}/play/info` | bearer JWT or stream token | how the item plays for the client's `caps`; a packaged title's `qualities` |
 | `GET /api/v1/items/{id}/play/master.m3u8` | bearer JWT or stream token | the HLS master for the client's `caps` and `q` |
 | `POST /api/v1/items/{id}/play/prewarm` | bearer JWT or stream token | warm the variant the client starts on |
@@ -121,7 +122,12 @@ watchlist rows, the settings their account keeps — and asks portal-api, with t
 account deletion token (`ACCOUNT_DELETION_TOKEN`, sent as
 `X-Account-Deletion-Token`), to delete their account in the platform's realm
 (`DELETE /api/portal/me`). The rows are deleted in a transaction committed
-only once portal-api has deleted the account, or found it gone already:
+only once portal-api has deleted the account, or found it gone already. Once
+portal-api has been asked, the deletion goes to its end even where the app
+goes before its answer. Where portal-api gives no answer within 20 seconds,
+or a 5xx, it is asked once more, and an account it deleted then is answered
+gone; a 4xx is not asked again. The two asks and the commit or rollback
+after them take at most 55 seconds:
 
 | Answer | When | Deleted |
 |---|---|---|
@@ -137,10 +143,55 @@ same token: `DELETE /api/v1/admin/accounts/{sub}/data`. Bug reports already
 sent to OpenProject are not deleted with an account, and the request log keeps
 no bearer (it shows `REDACTED`).
 
+Once an account's deletion has begun, by either route, nothing more is kept
+for it. That holds for every write of the person's: one that adds a watch
+position, a watched mark, a like, a title to a list or a list; one that
+removes any of them or renames a list; a change of the settings, one that
+changes nothing too; and a read of the lists, which makes the default one. It
+holds for a bug report and a new stream token as well. One sent while the
+deletion is open waits for its end, up to 3 seconds; past them it answers
+`503` `account busy`, with `Retry-After: 5`, so that the requests waiting on
+one account do not hold the database's connections from every other. A
+deletion can stay open for most of a minute, so a request sent again can be
+busy again. A statement timeout of the database below these 3 seconds would
+turn such a wait into a failure, `500`, instead of `503`; the platform's
+charts set none. Once
+the deletion is committed, that one and any after it with a bearer that is
+still valid add nothing and answer `401`
+`{"error": "account_deleted", "detail": "…"}`, a code without values. Reads
+answer as before. A stream token minted before the deletion runs out by
+itself, in 6 hours; it reaches the media, the catalog's events and the
+players' telemetry alone, and writes nothing. Until it runs out, the
+telemetry sent with it is taken as any other: counted, and logged with the
+account's id. Where the database does not answer the check, a stream token
+is minted and a bug report taken all the same. To refuse them chino-api keeps
+the account's id for an hour, longer than a sign-in's token lives (migration
+007, `deleted_accounts`), and nothing else of the account; after the hour a
+sign-in of the same id is a new account. A deletion that is rolled back keeps
+no id, and the waiting write is written.
+
+An admin's deletion is committed before portal-api deletes the account
+itself. Its answer names it, `{"deleted": {…}, "deletion": "…"}`: the
+deletion's own value, random and new for each deletion. Where the account's
+deletion then fails, the person still has their account, and portal-api is
+to ask for that deletion to be forgotten, with the same bearer and token and
+the value as a query parameter: `DELETE
+/api/v1/admin/accounts/{sub}/deleted?deletion=…` answers `204`, and the
+person writes again at once; their data stays deleted. Only that deletion is
+forgotten: where the id kept is another deletion's (the person's own, made
+since), is past its hour, or none is kept, it answers `409`
+`{"error": "deletion_not_kept", "detail": "…"}` and the id stays. Without
+`deletion`, or with it twice, it is `400`; behind an open deletion of the same
+account it waits as a write does, and past 3 seconds answers `503` `account
+busy`. Until portal-api asks for it, a failed admin deletion keeps the
+person, who still has their account, from writing for up to the hour.
+
 A client offers it as **Delete Account**, asks first and says what goes
 (their history, lists and progress, and their account), sends the request with
 its bearer, and signs out on `200`; on `409` it shows `message`, on `501` that
-accounts are deleted by whoever runs the server.
+accounts are deleted by whoever runs the server. A client that is still
+signed in to a deleted account elsewhere signs it out on `401`
+`account_deleted`.
 
 ### The account's settings
 
@@ -151,8 +202,8 @@ list shows its movies and its shows apart, `false` while nothing is set.
 answers the settings as kept; `null` puts it back to `false`. They are kept by
 the account's subject (migration 006, `account_settings`) and deleted with
 its data. A request that is refused changes nothing, the fields beside the
-refused one neither, and answers `400` with a code, its values and a line for
-the log:
+refused one neither, and answers `400` with a code, the values it needs, and a
+line for the log; a code that needs no values sends no `values`:
 
 | Answer | When |
 |---|---|
@@ -548,7 +599,10 @@ gets a fixed line that says what it cannot have, never the error's text.
 - A bearer that does not verify (expired, not signed by `OIDC_ISSUER`'s
   keys, malformed) is `401` `invalid token`, and one made for another
   audience than `OIDC_AUDIENCE` `401` `invalid token: wrong audience`, as
-  plain text.
+  plain text. A write for an account whose deletion has begun is `401`
+  `{"error": "account_deleted", "detail": "…"}`, and one that waited for
+  that deletion to end more than 3 seconds `503` `account busy`, as plain
+  text, with `Retry-After: 5` ([Deleting an account](#deleting-an-account)).
 - A route that answers its read or write of the database failing answers
   `500` `database error`, as plain text, whatever the error. Account
   deletion answers its own: `DELETE /api/v1/me` `500`

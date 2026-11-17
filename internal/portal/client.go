@@ -66,10 +66,22 @@ type AccountRefused struct{ Message string }
 
 func (e *AccountRefused) Error() string { return e.Message }
 
+// Answered is portal-api answering account deletion with a status it does
+// not answer it with otherwise: an ErrPortalUnavailable that came with an
+// answer, Status.
+type Answered struct{ Status int }
+
+func (e *Answered) Error() string {
+	return fmt.Sprintf("%v: it answered %d", ErrPortalUnavailable, e.Status)
+}
+
+func (e *Answered) Unwrap() error { return ErrPortalUnavailable }
+
 // DeleteAccount asks portal-api to delete the account of the person whose
 // bearer this is (DELETE /api/portal/me), showing the account deletion
 // token: nil when it is deleted, ErrAccountGone when there was none,
-// *AccountRefused when portal-api will not, ErrPortalUnavailable otherwise.
+// *AccountRefused when portal-api will not, ErrPortalUnavailable otherwise:
+// a *Answered where it answered with another status.
 func (c *Client) DeleteAccount(ctx context.Context, bearer, token string) error {
 	if !c.Enabled() || bearer == "" || token == "" {
 		return ErrPortalUnavailable
@@ -98,7 +110,7 @@ func (c *Client) DeleteAccount(ctx context.Context, bearer, token string) error 
 		}
 		return &AccountRefused{Message: msg}
 	}
-	return fmt.Errorf("%w: it answered %d", ErrPortalUnavailable, resp.StatusCode)
+	return &Answered{Status: resp.StatusCode}
 }
 
 func New(baseURL string) *Client {

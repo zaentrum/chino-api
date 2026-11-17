@@ -37,8 +37,9 @@ The workflow `.github/workflows/build.yml` runs `go build ./...`,
 `go vet ./...` and `go test -race ./...` on every pull request and on main, with a
 throwaway PostgreSQL 16 for the tests that need one. The tests
 of what chino-api keeps (progress, watched, finished titles, Continue
-Watching, account deletion, a capped viewer's lists, the account's settings,
-a database error's answer, lists by kind: 18 of the 143) need a
+Watching, account deletion and the writes refused after it, a capped viewer's
+lists, the account's settings, a database error's answer, lists by kind: 34
+of the 165) need a
 PostgreSQL in which they may create and drop schemas, named by
 `CHINO_API_TEST_DATABASE_URL`; each works in a schema of its own and drops it.
 Without it they are skipped, and where `CI` is set (GitHub's runners set it)

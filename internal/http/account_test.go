@@ -17,13 +17,14 @@ import (
 
 const deletionToken = "account-deletion-token-for-tests-0123456789"
 
-// fakePortal is portal-api's DELETE /api/portal/me: it records each call and
-// answers status, with body.
+// fakePortal is portal-api's DELETE /api/portal/me: it records each call,
+// runs hook where there is one, and answers status, with body.
 type fakePortal struct {
 	*httptest.Server
 	mu     sync.Mutex
 	status int
 	body   string
+	hook   func()
 	calls  []*http.Request
 }
 
@@ -34,6 +35,9 @@ func newFakePortal(t *testing.T) *fakePortal {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.calls = append(f.calls, r.Clone(r.Context()))
+		if f.hook != nil {
+			f.hook()
+		}
 		w.WriteHeader(f.status)
 		_, _ = w.Write([]byte(f.body))
 	}))
@@ -160,8 +164,37 @@ func TestDeletingYourOwnAccount(t *testing.T) {
 	}
 }
 
-// An account's data, for portal-api: an admin's bearer and the deletion
-// token, both, or nothing.
+// portal-api is asked to delete the account once more where it gave no
+// answer or a 5xx, and only then: a 4xx asked again would be answered the
+// same.
+func TestPortalAPIIsAskedAgainOnlyWithoutAnAnswerOrAfterA5xx(t *testing.T) {
+	is := newIssuer(t)
+	fp := newFakePortal(t)
+	h := accountRouter(t, is, fp.URL, deletionToken, nil)
+	bearer := http.Header{"Authorization": {"Bearer " + is.tokenWith(t, "kid-asked", "chino", realm("zaentrum-user"))}}
+	for _, c := range []struct {
+		status, code, asks int
+	}{
+		{http.StatusBadRequest, http.StatusBadGateway, 1},
+		{http.StatusForbidden, http.StatusBadGateway, 1},
+		{http.StatusConflict, http.StatusConflict, 1},
+		{http.StatusNotFound, http.StatusOK, 1},
+		{http.StatusInternalServerError, http.StatusBadGateway, 2},
+		{http.StatusBadGateway, http.StatusBadGateway, 2},
+		{http.StatusServiceUnavailable, http.StatusBadGateway, 2},
+	} {
+		fp.mu.Lock()
+		fp.status, fp.body = c.status, ""
+		fp.mu.Unlock()
+		w := do(h, http.MethodDelete, "/api/v1/me", bearer)
+		if asks := len(fp.take()); w.Code != c.code || asks != c.asks {
+			t.Errorf("portal-api answering %d: %d after %d asks, want %d after %d", c.status, w.Code, asks, c.code, c.asks)
+		}
+	}
+}
+
+// An account's data, and the forgetting of its deletion, for portal-api: an
+// admin's bearer and the deletion token, both, or nothing.
 func TestAnAccountsDataTakesAnAdminAndTheToken(t *testing.T) {
 	is := newIssuer(t)
 	h := accountRouter(t, is, "http://portal-api.invalid", deletionToken, nil)
@@ -177,25 +210,36 @@ func TestAnAccountsDataTakesAnAdminAndTheToken(t *testing.T) {
 		}
 		return out
 	}
-	path := "/api/v1/admin/accounts/kid-1/data"
-	for name, c := range map[string]struct {
-		header http.Header
-		code   int
-	}{
-		"no bearer":                     {with(nil, deletionToken), http.StatusUnauthorized},
-		"a viewer with the token":       {with(viewer, deletionToken), http.StatusForbidden},
-		"an admin without the token":    {with(admin, ""), http.StatusForbidden},
-		"an admin with a wrong token":   {with(admin, deletionToken+"x"), http.StatusForbidden},
-		"an admin with a shorter token": {with(admin, deletionToken[:20]), http.StatusForbidden},
-		"an admin with the token":       {with(admin, deletionToken), http.StatusOK},
+	for path, done := range map[string]int{
+		"/api/v1/admin/accounts/kid-1/data":                  http.StatusOK,
+		"/api/v1/admin/accounts/kid-1/deleted?deletion=0123": http.StatusNoContent,
 	} {
-		if w := do(h, http.MethodDelete, path, c.header); w.Code != c.code {
-			t.Errorf("%s: %d %s, want %d", name, w.Code, w.Body, c.code)
+		for name, c := range map[string]struct {
+			header http.Header
+			code   int
+		}{
+			"no bearer":                     {with(nil, deletionToken), http.StatusUnauthorized},
+			"a viewer with the token":       {with(viewer, deletionToken), http.StatusForbidden},
+			"an admin without the token":    {with(admin, ""), http.StatusForbidden},
+			"an admin with a wrong token":   {with(admin, deletionToken+"x"), http.StatusForbidden},
+			"an admin with a shorter token": {with(admin, deletionToken[:20]), http.StatusForbidden},
+			"an admin with the token":       {with(admin, deletionToken), done},
+		} {
+			if w := do(h, http.MethodDelete, path, c.header); w.Code != c.code {
+				t.Errorf("%s, %s: %d %s, want %d", path, name, w.Code, w.Body, c.code)
+			}
+		}
+		off := accountRouter(t, is, "http://portal-api.invalid", "", nil)
+		if w := do(off, http.MethodDelete, path, with(admin, deletionToken)); w.Code != http.StatusNotImplemented {
+			t.Errorf("%s, no token configured: %d", path, w.Code)
 		}
 	}
-	h = accountRouter(t, is, "http://portal-api.invalid", "", nil)
-	if w := do(h, http.MethodDelete, path, with(admin, deletionToken)); w.Code != http.StatusNotImplemented {
-		t.Errorf("no token configured: %d", w.Code)
+	// The deletion to forget is named, once.
+	for _, path := range []string{"/api/v1/admin/accounts/kid-1/deleted", "/api/v1/admin/accounts/kid-1/deleted?deletion=",
+		"/api/v1/admin/accounts/kid-1/deleted?deletion=0123&deletion=4567"} {
+		if w := do(h, http.MethodDelete, path, with(admin, deletionToken)); w.Code != http.StatusBadRequest {
+			t.Errorf("%s: %d %s, want 400", path, w.Code, w.Body)
+		}
 	}
 }
 
@@ -231,8 +275,9 @@ func TestAccountDeletionKeepsOrTakesTheRows(t *testing.T) {
 		}
 		watched, _ := st.ListWatched(ctx, user, 10, 0)
 		likes, _ := st.ListFlag(ctx, store.LikesTable, user, 10)
-		// Reading the lists makes an empty default one again, as for any
-		// new viewer: what counts is what is in them.
+		// Reading the lists makes an empty default one, as for any new
+		// viewer, and is refused for a deleted account: what counts is
+		// what is in them.
 		lists, _ := st.ListWatchlists(ctx, user)
 		for _, l := range lists {
 			n += l.ItemCount

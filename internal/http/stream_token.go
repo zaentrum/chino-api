@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/zaentrum/chino-api/internal/auth"
+	"github.com/zaentrum/chino-api/internal/store"
 )
 
 // streamTokenTTL is the lifetime of a minted stream token. Long enough
@@ -23,12 +24,31 @@ const streamTokenTTL = 6 * time.Hour
 // media and artwork routes, the /events stream, the /play/events beacon
 // — so a leaked token can stream the user's media (and post telemetry as
 // them) but can't poke at /me/* or /items/* mutations.
-func postStreamToken(signer *auth.Signer) http.HandlerFunc {
+//
+// None is minted for an account whose deletion has begun: 401
+// account_deleted, or 503 where it waited too long for that deletion to end
+// (accountRefused). One minted before runs out by itself. Where the check
+// itself fails - the database down - with the caller still there, it is
+// logged and the token minted: a token takes no database, and without one
+// the apps show no artwork and start no playback. Where the caller went
+// (the request's context ended, the check with it), it is answered as a
+// failed request, with no token.
+func postStreamToken(signer *auth.Signer, st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := auth.SubjectFromContext(r.Context())
 		if userID == "" {
 			http.Error(w, "no subject", http.StatusUnauthorized)
 			return
+		}
+		if err := st.CheckAccount(r.Context(), userID); err != nil {
+			if accountRefused(w, r, err, "a stream token") {
+				return
+			}
+			if r.Context().Err() != nil {
+				storeFailed(w, r, err)
+				return
+			}
+			logFailure(r, "the database", "the account's check, minted all the same", err)
 		}
 		// A capped viewer's token carries its cap, so the media routes hold
 		// the viewer to it as the bearer routes do.

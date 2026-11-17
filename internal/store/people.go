@@ -17,7 +17,9 @@ import (
 // The rows go inside a transaction the caller commits once the person's
 // account is gone too, or rolls back when it is not — so a refused account
 // deletion deletes nothing, and a retry after a failure starts from what was
-// there.
+// there. The same transaction holds the account's lock and writes its id to
+// deleted_accounts (deleted.go): from its start nothing more is kept for the
+// person, and a rollback takes the id back with the rows.
 
 // Deleted counts what a deletion took.
 type Deleted struct {
@@ -31,14 +33,19 @@ type Deleted struct {
 }
 
 // Deletion is a person's data, deleted in a transaction not yet committed.
+// ID is the deletion's own value (newDeletion), kept with the account's id:
+// what ForgetDeletion takes to undo this deletion and no other; "" with no
+// database.
 type Deletion struct {
 	tx      pgx.Tx
+	ID      string
 	Deleted Deleted
 }
 
-// DeleteUserData deletes the rows of userID and answers the open deletion.
-// A nil Store — no database — has nothing to delete, and its deletion
-// commits as a no-op.
+// DeleteUserData begins the deletion of userID's account (markDeleted),
+// deletes their rows and answers the open deletion: until it is committed or
+// rolled back, a write for userID waits. A nil Store — no database — has
+// nothing to delete, and its deletion commits as a no-op.
 func (s *Store) DeleteUserData(ctx context.Context, userID string) (*Deletion, error) {
 	if userID == "" {
 		return nil, errors.New("no subject")
@@ -46,11 +53,15 @@ func (s *Store) DeleteUserData(ctx context.Context, userID string) (*Deletion, e
 	if s == nil || s.p == nil {
 		return &Deletion{}, nil
 	}
-	tx, err := s.p.Begin(ctx)
+	tx, err := s.p.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return nil, err
 	}
-	d := &Deletion{tx: tx}
+	d := &Deletion{tx: tx, ID: newDeletion()}
+	if err := markDeleted(ctx, tx, userID, d.ID); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, err
+	}
 	steps := []struct {
 		count *int64
 		sql   string

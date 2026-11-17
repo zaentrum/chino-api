@@ -155,19 +155,21 @@ func (s *Store) ListContinueWatching(ctx context.Context, userID string, limit i
 // MarkWatched inserts (or refreshes) a watched_history row for each of
 // itemIDs, in one statement: the episodes of one file are watched together.
 // Idempotent: re-watching bumps watched_at to now() so the most-recent watch
-// wins.
+// wins. ErrAccountDeleted once the account's deletion has begun (asAccount).
 func (s *Store) MarkWatched(ctx context.Context, userID string, itemIDs ...string) error {
 	itemIDs = distinct(itemIDs)
 	if s == nil || s.p == nil || userID == "" || len(itemIDs) == 0 {
 		return nil
 	}
-	_, err := s.p.Exec(ctx,
-		`INSERT INTO watched_history (user_id, item_id, watched_at)
-		 SELECT $1, id, now() FROM unnest($2::text[]) AS t(id)
-		 ON CONFLICT (user_id, item_id) DO UPDATE
-		   SET watched_at = now()`,
-		userID, itemIDs)
-	return err
+	return s.asAccount(ctx, userID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`INSERT INTO watched_history (user_id, item_id, watched_at)
+			 SELECT $1, id, now() FROM unnest($2::text[]) AS t(id)
+			 ON CONFLICT (user_id, item_id) DO UPDATE
+			   SET watched_at = now()`,
+			userID, itemIDs)
+		return err
+	})
 }
 
 // MarkWatchedPlayed is MarkWatched for a title finished ago before now (a
@@ -178,13 +180,15 @@ func (s *Store) MarkWatchedPlayed(ctx context.Context, userID string, ago time.D
 	if s == nil || s.p == nil || userID == "" || len(itemIDs) == 0 {
 		return nil
 	}
-	_, err := s.p.Exec(ctx,
-		`INSERT INTO watched_history AS w (user_id, item_id, watched_at)
-		 SELECT $1, id, now() - ($3::double precision * interval '1 millisecond') FROM unnest($2::text[]) AS t(id)
-		 ON CONFLICT (user_id, item_id) DO UPDATE
-		   SET watched_at = GREATEST(w.watched_at, EXCLUDED.watched_at)`,
-		userID, itemIDs, max(ago, 0).Milliseconds())
-	return err
+	return s.asAccount(ctx, userID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`INSERT INTO watched_history AS w (user_id, item_id, watched_at)
+			 SELECT $1, id, now() - ($3::double precision * interval '1 millisecond') FROM unnest($2::text[]) AS t(id)
+			 ON CONFLICT (user_id, item_id) DO UPDATE
+			   SET watched_at = GREATEST(w.watched_at, EXCLUDED.watched_at)`,
+			userID, itemIDs, max(ago, 0).Milliseconds())
+		return err
+	})
 }
 
 // distinct is ids without the empty ones and without repeats, in their
@@ -248,16 +252,18 @@ func (s *Store) ListWatched(ctx context.Context, userID string, limit, offset in
 // UnmarkWatched removes the watched_history row of each of itemIDs, so the
 // items stop showing the "watched" badge and re-enter Continue Watching if
 // a progress row still exists. Idempotent — deleting an absent row is a
-// no-op.
+// no-op. ErrAccountDeleted once the account's deletion has begun (asAccount).
 func (s *Store) UnmarkWatched(ctx context.Context, userID string, itemIDs ...string) error {
 	itemIDs = distinct(itemIDs)
 	if s == nil || s.p == nil || userID == "" || len(itemIDs) == 0 {
 		return nil
 	}
-	_, err := s.p.Exec(ctx,
-		`DELETE FROM watched_history WHERE user_id = $1 AND item_id = ANY($2)`,
-		userID, itemIDs)
-	return err
+	return s.asAccount(ctx, userID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`DELETE FROM watched_history WHERE user_id = $1 AND item_id = ANY($2)`,
+			userID, itemIDs)
+		return err
+	})
 }
 
 // WatchedAtBatch returns the watched_at timestamp for each requested
@@ -312,7 +318,8 @@ func (s *Store) LastWatchedEpisode(ctx context.Context, userID string, candidate
 // "tag tables" (watchlist, likes). Pass present=true to upsert, false
 // to delete. Idempotent either way. `table` MUST be a literal from the
 // caller (we don't accept arbitrary identifiers; see WatchlistTable /
-// LikesTable constants).
+// LikesTable constants). Either is ErrAccountDeleted once the account's
+// deletion has begun (asAccount).
 func (s *Store) SetFlag(ctx context.Context, table, userID, itemID string, present bool) error {
 	if s == nil || s.p == nil || userID == "" || itemID == "" {
 		return nil
@@ -321,20 +328,24 @@ func (s *Store) SetFlag(ctx context.Context, table, userID, itemID string, prese
 		return errors.New("invalid flag table")
 	}
 	if !present {
-		_, err := s.p.Exec(ctx,
-			"DELETE FROM "+table+" WHERE user_id = $1 AND item_id = $2",
-			userID, itemID)
-		return err
+		return s.asAccount(ctx, userID, func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx,
+				"DELETE FROM "+table+" WHERE user_id = $1 AND item_id = $2",
+				userID, itemID)
+			return err
+		})
 	}
 	ts := "added_at"
 	if table == LikesTable {
 		ts = "liked_at"
 	}
-	_, err := s.p.Exec(ctx,
-		"INSERT INTO "+table+" (user_id, item_id, "+ts+") VALUES ($1, $2, now()) "+
-			"ON CONFLICT (user_id, item_id) DO NOTHING",
-		userID, itemID)
-	return err
+	return s.asAccount(ctx, userID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			"INSERT INTO "+table+" (user_id, item_id, "+ts+") VALUES ($1, $2, now()) "+
+				"ON CONFLICT (user_id, item_id) DO NOTHING",
+			userID, itemID)
+		return err
+	})
 }
 
 // ListFlag returns the items in the user's watchlist / likes,
@@ -485,6 +496,7 @@ func (s *Store) BumpFeedbackReport(ctx context.Context, fingerprint string) (int
 // the position and updated_at. `durationSec` is the player's view of the
 // whole movie length; we keep it so a future "Continue watching" UI can
 // show progress percentages without re-fetching the catalogue.
+// ErrAccountDeleted once the account's deletion has begun (asAccount).
 func (s *Store) SaveProgress(ctx context.Context, userID string, itemIDs []string, positionSec, durationSec int) error {
 	itemIDs = distinct(itemIDs)
 	if s == nil || s.p == nil || userID == "" || len(itemIDs) == 0 {
@@ -493,16 +505,18 @@ func (s *Store) SaveProgress(ctx context.Context, userID string, itemIDs []strin
 	if positionSec < 0 {
 		positionSec = 0
 	}
-	_, err := s.p.Exec(ctx,
-		`INSERT INTO playback_progress
-		   (user_id, item_id, position_sec, duration_sec, updated_at)
-		 SELECT $1, id, $3, $4, now() FROM unnest($2::text[]) AS t(id)
-		 ON CONFLICT (user_id, item_id) DO UPDATE
-		   SET position_sec = EXCLUDED.position_sec,
-		       duration_sec = GREATEST(EXCLUDED.duration_sec, playback_progress.duration_sec),
-		       updated_at   = now()`,
-		userID, itemIDs, positionSec, durationSec)
-	return err
+	return s.asAccount(ctx, userID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`INSERT INTO playback_progress
+			   (user_id, item_id, position_sec, duration_sec, updated_at)
+			 SELECT $1, id, $3, $4, now() FROM unnest($2::text[]) AS t(id)
+			 ON CONFLICT (user_id, item_id) DO UPDATE
+			   SET position_sec = EXCLUDED.position_sec,
+			       duration_sec = GREATEST(EXCLUDED.duration_sec, playback_progress.duration_sec),
+			       updated_at   = now()`,
+			userID, itemIDs, positionSec, durationSec)
+		return err
+	})
 }
 
 // SaveProgressPlayed is SaveProgress for a position played ago before now -
@@ -519,21 +533,25 @@ func (s *Store) SaveProgressPlayed(ctx context.Context, userID string, itemIDs [
 	if positionSec < 0 {
 		positionSec = 0
 	}
-	rows, err := s.p.Query(ctx,
-		`INSERT INTO playback_progress AS p
-		   (user_id, item_id, position_sec, duration_sec, updated_at)
-		 SELECT $1, id, $3, $4, now() - ($5::double precision * interval '1 millisecond') FROM unnest($2::text[]) AS t(id)
-		 ON CONFLICT (user_id, item_id) DO UPDATE
-		   SET position_sec = EXCLUDED.position_sec,
-		       duration_sec = GREATEST(EXCLUDED.duration_sec, p.duration_sec),
-		       updated_at   = EXCLUDED.updated_at
-		   WHERE p.updated_at < EXCLUDED.updated_at
-		 RETURNING item_id`,
-		userID, itemIDs, positionSec, durationSec, max(ago, 0).Milliseconds())
-	if err != nil {
-		return nil, err
-	}
-	won, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	var won []string
+	err := s.asAccount(ctx, userID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx,
+			`INSERT INTO playback_progress AS p
+			   (user_id, item_id, position_sec, duration_sec, updated_at)
+			 SELECT $1, id, $3, $4, now() - ($5::double precision * interval '1 millisecond') FROM unnest($2::text[]) AS t(id)
+			 ON CONFLICT (user_id, item_id) DO UPDATE
+			   SET position_sec = EXCLUDED.position_sec,
+			       duration_sec = GREATEST(EXCLUDED.duration_sec, p.duration_sec),
+			       updated_at   = EXCLUDED.updated_at
+			   WHERE p.updated_at < EXCLUDED.updated_at
+			 RETURNING item_id`,
+			userID, itemIDs, positionSec, durationSec, max(ago, 0).Milliseconds())
+		if err != nil {
+			return err
+		}
+		won, err = pgx.CollectRows(rows, pgx.RowTo[string])
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}

@@ -20,6 +20,13 @@ const testDatabase = "CHINO_API_TEST_DATABASE_URL"
 // database testDatabase names, dropped when the test ends.
 func testStore(t *testing.T) *Store {
 	t.Helper()
+	return testStoreSized(t, 0)
+}
+
+// testStoreSized is testStore with a pool of conns connections; 0 is pgx's
+// own size.
+func testStoreSized(t *testing.T, conns int) *Store {
+	t.Helper()
 	dsn := os.Getenv(testDatabase)
 	if dsn == "" {
 		if os.Getenv("CI") != "" {
@@ -54,6 +61,9 @@ func testStore(t *testing.T) *Store {
 	}
 	q := u.Query()
 	q.Set("search_path", schema)
+	if conns > 0 {
+		q.Set("pool_max_conns", fmt.Sprint(conns))
+	}
 	u.RawQuery = q.Encode()
 	st, err := New(ctx, u.String())
 	if err != nil {
@@ -132,6 +142,7 @@ func TestDeleteUserData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(rollbackOf(d))
 	if err := d.Rollback(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -143,6 +154,7 @@ func TestDeleteUserData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(rollbackOf(d))
 	want := Deleted{Progress: 2, Watched: 2, Watchlists: 1, WatchlistItems: 2, Likes: 2, LegacyWatchlist: 2, Settings: 1}
 	if d.Deleted != want {
 		t.Errorf("counted %+v, want %+v", d.Deleted, want)

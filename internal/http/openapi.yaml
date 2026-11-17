@@ -41,6 +41,28 @@ info:
     resume point on Continue Watching), a failure leaves that out, and the
     route answers as without it. A request whose viewer goes before the
     database or an upstream has answered is answered as one that failed.
+
+    Once an account's deletion has begun (DELETE /v1/me, or an admin's
+    DELETE /v1/admin/accounts/{sub}/data), nothing more is kept for it. That
+    holds for every write of the person's - one that adds, removes or
+    renames, a PATCH of the settings that changes nothing, a read of the
+    lists, which makes the default one - and for a bug report and a new
+    stream token. One sent while the deletion is open waits for its end, up
+    to 3 seconds, past which it answers 503 "account busy" with Retry-After:
+    5; once the deletion is committed, that one and any after it with a
+    bearer still valid answer 401 account_deleted ({error, detail}, no
+    values), and the app signs the account out. Reads answer as before, and
+    a stream token minted before runs out by itself. The account's id is
+    kept an hour for this, longer than a sign-in's token lives, and nothing
+    else of it; a deletion that is rolled back keeps none, and the waiting
+    write is written. Once portal-api has deleted the account, the deletion
+    ends even where the app goes before its answer; where portal-api gives
+    no answer, or a 5xx, it is asked once more, and a 4xx is not asked
+    again. Where portal-api cannot delete the
+    account after an admin's deletion of its data, it is to have the
+    deletion forgotten (DELETE /v1/admin/accounts/{sub}/deleted, with the
+    deletion's value /data answered), and the person then writes again at
+    once; until it does, they cannot write for up to the hour.
 servers:
   - url: /api
 paths:
@@ -92,8 +114,10 @@ paths:
         to delete their account (DELETE /api/portal/me). The rows are deleted
         in a transaction committed only once the account is deleted or gone
         already; when portal-api refuses or does not answer, nothing is
-        deleted. The bearer goes in the Authorization header: a stream token
-        is not taken, and a bearer in ?token= is refused.
+        deleted. Once it has begun, nothing more is kept for the person: a
+        write for them answers 401 account_deleted (see above). The bearer
+        goes in the Authorization header: a stream token is not taken, and a
+        bearer in ?token= is refused.
       security: [{ bearerAuth: [] }]
       responses:
         "200":
@@ -184,8 +208,8 @@ paths:
                   value: { error: watchlist_by_kind_invalid, detail: "watchlist_by_kind takes true, false or null" }
             text/plain:
               schema: { type: string, example: bad json }
-        "401":
-          description: No bearer, or one that is not valid
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/AccountBusy" }
         "404":
           description: >-
             A server without a database, which keeps nothing (its /api/config
@@ -306,6 +330,8 @@ paths:
           description: Saved, or older than the saved position and so not written
         "400":
           description: No body, or no JSON
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/AccountBusy" }
         "404":
           description: No such item, or one the viewer's rating cap does not allow
   /v1/items:
@@ -509,8 +535,8 @@ paths:
             include given twice ("include is given once"), or a query that
             does not parse, a pair with a semicolon or a bad escape ("bad
             query"), as plain text
-        "401":
-          description: Unauthorized
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/AccountBusy" }
         "502":
           description: The catalog could not say what a capped viewer may be served, or, with include=counts, the kind of any of the titles
     post:
@@ -533,6 +559,8 @@ paths:
               schema: { $ref: "#/components/schemas/Watchlist" }
         "400":
           description: Empty / over-length name
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/AccountBusy" }
         "409":
           description: Too many lists (max 50) or case-insensitive duplicate name
   /v1/me/watchlists/memberships:
@@ -631,6 +659,8 @@ paths:
               schema: { $ref: "#/components/schemas/Watchlist" }
         "400":
           description: Empty / over-length name
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/AccountBusy" }
         "404":
           description: Not the caller's list
         "409":
@@ -646,6 +676,8 @@ paths:
       responses:
         "204":
           description: Deleted
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/AccountBusy" }
         "404":
           description: Not the caller's list
         "409":
@@ -666,6 +698,8 @@ paths:
       responses:
         "204":
           description: Added (or already present)
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/AccountBusy" }
         "404":
           description: Not the caller's list
     delete:
@@ -683,6 +717,8 @@ paths:
       responses:
         "204":
           description: Removed (or already absent)
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/AccountBusy" }
         "404":
           description: Not the caller's list
   /v1/me/watchlist:
@@ -703,8 +739,8 @@ paths:
                   items:
                     type: array
                     items: { type: string }
-        "401":
-          description: Unauthorized
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/AccountBusy" }
   /v1/me/watchlist/{id}:
     put:
       summary: Add an item to the default list (back-compat alias)
@@ -717,6 +753,8 @@ paths:
       responses:
         "204":
           description: Added (or already present)
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/AccountBusy" }
     delete:
       summary: Remove an item from the default list (back-compat alias)
       security: [{ bearerAuth: [] }]
@@ -728,6 +766,8 @@ paths:
       responses:
         "204":
           description: Removed (or already absent)
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/AccountBusy" }
   /v1/items/{id}/subtitles:
     get:
       summary: An item's sidecar subtitles, and the fonts its styled ones are drawn with
@@ -1384,12 +1424,17 @@ paths:
           description: New ticket created (same body shape, duplicate=false)
         "400":
           description: Invalid report (bad enum, empty description, oversized or non-png/jpeg screenshot)
-        "401":
-          description: Unauthorized
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "429":
           description: Rate limited (5 reports / 10 min per user)
         "503":
-          description: Feedback pipeline not configured (no OpenProject token)
+          description: >-
+            Feedback pipeline not configured (no OpenProject token); or
+            "account busy", with Retry-After, where the account's check waited
+            more than 3 seconds for its deletion under way to end. Plain text.
+          content:
+            text/plain:
+              schema: { type: string, example: feedback not configured }
   /v1/admin/items/{id}/package:
     description: >-
       An admin's: the bearer must carry the admin role in its realm roles
@@ -1461,7 +1506,11 @@ paths:
         portal-api calls it when an admin deletes someone on the People page,
         before it deletes their account: the admin's bearer, carrying the
         admin role, and the account deletion token. Deleting an account
-        chino keeps nothing of is no error.
+        chino keeps nothing of is no error. The deletion is committed at
+        once: where portal-api then cannot delete the account, the person,
+        who still has it, cannot write for up to an hour, until portal-api
+        has the deletion forgotten (DELETE /v1/admin/accounts/{sub}/deleted),
+        as it is to do.
       security: [{ bearerAuth: [] }]
       parameters:
         - in: path
@@ -1479,6 +1528,62 @@ paths:
                 type: object
                 properties:
                   deleted: { $ref: "#/components/schemas/DeletedData" }
+                  deletion:
+                    type: string
+                    description: >-
+                      This deletion's own value, random, a new one for each
+                      deletion: what DELETE /v1/admin/accounts/{sub}/deleted
+                      takes to forget this deletion and no other. Not sent
+                      by a server without a database.
+        "401":
+          description: No bearer, or one that is not valid
+        "403":
+          description: The bearer does not carry the admin role, or the deletion token is missing or wrong
+        "501":
+          description: Account deletion is not set up (no ACCOUNT_DELETION_TOKEN)
+  /v1/admin/accounts/{sub}/deleted:
+    delete:
+      summary: Forget an admin's deletion of an account that stays (for portal-api)
+      description: >-
+        For portal-api to call where it cannot delete the account after
+        chino-api deleted the account's data: the person still has their account, and
+        chino-api stops keeping that deletion's id, so that their writes go in
+        again at once and are no longer answered account_deleted. Only the
+        deletion named is forgotten: where another deletion of the account
+        has kept its id since (the person's own among them), that one stays.
+        The data deleted stays deleted. The admin's bearer, carrying the admin
+        role, and the account deletion token, as for the data.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: sub
+          required: true
+          description: The account's subject (its id in the platform's realm)
+          schema: { type: string }
+        - in: query
+          name: deletion
+          required: true
+          description: The deletion's value, as DELETE /v1/admin/accounts/{sub}/data answered it (deletion), given once
+          schema: { type: string }
+        - $ref: "#/components/parameters/DeletionToken"
+      responses:
+        "204":
+          description: >-
+            The deletion forgotten; on a server without a database, which
+            keeps no id, nothing to forget
+        "400":
+          description: No deletion, or deletion given twice, as plain text
+        "503": { $ref: "#/components/responses/AccountBusy" }
+        "409":
+          description: >-
+            No id of this deletion is kept, so there is nothing of its own to
+            undo: it was forgotten already or is past its hour, swept or not,
+            or another deletion of the account has kept its own id since,
+            which stays.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeletionNotKept" }
+              example: { error: deletion_not_kept, detail: "no id of this deletion is kept: nothing of its own to undo" }
         "401":
           description: No bearer, or one that is not valid
         "403":
@@ -1546,6 +1651,32 @@ components:
         nowhere.
       schema: { type: string, pattern: "^[A-Za-z0-9-]{1,64}$" }
   responses:
+    AccountBusy:
+      description: >-
+        "account busy", as plain text: the request waited more than 3 seconds
+        for the account's deletion under way to end, and gave up; nothing was
+        written. Send it again after Retry-After. A deletion can stay open for
+        most of a minute, so the request sent again can be busy again; once
+        the deletion is committed, it is answered account_deleted.
+      headers:
+        Retry-After:
+          description: Seconds to wait before sending it again
+          schema: { type: integer, example: 5 }
+      content:
+        text/plain:
+          schema: { type: string, example: account busy }
+    Unauthorized:
+      description: >-
+        No bearer, or one that is not valid, as plain text; or account_deleted,
+        a write for an account whose deletion has begun, sent while it is open
+        or after it: nothing more is kept for the account, and the app signs
+        it out.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AccountDeleted" }
+          example: { error: account_deleted, detail: "the account's deletion has begun: nothing more is kept for it" }
+        text/plain:
+          schema: { type: string, example: invalid token }
     NoNotice:
       description: The person has no notice of that id — someone else's is as one there is not
       content:
@@ -2041,14 +2172,32 @@ components:
       description: >-
         ADR-0023, part 4: the case's code, the values its sentence needs, and
         a line of English for the log and for details, never a sentence for
-        a person.
+        a person. A code that needs no values sends no values.
       properties:
         error: { type: string, enum: [setting_unknown, watchlist_by_kind_invalid] }
         values:
           type: object
-          description: setting_unknown alone
+          description: setting_unknown alone; watchlist_by_kind_invalid sends none
           properties:
             name: { type: string, description: The field the store does not keep }
+        detail: { type: string }
+    DeletionNotKept:
+      type: object
+      required: [error, detail]
+      description: >-
+        ADR-0023, part 4: deletion_not_kept, a code that needs no values and
+        sends none, and a line of English for the log and for details.
+      properties:
+        error: { type: string, enum: [deletion_not_kept] }
+        detail: { type: string }
+    AccountDeleted:
+      type: object
+      required: [error, detail]
+      description: >-
+        ADR-0023, part 4: account_deleted, a code that needs no values and
+        sends none, and a line of English for the log and for details.
+      properties:
+        error: { type: string, enum: [account_deleted] }
         detail: { type: string }
   securitySchemes:
     bearerAuth:

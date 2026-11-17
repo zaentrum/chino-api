@@ -47,20 +47,33 @@ func (s *Store) GetSettings(ctx context.Context, userID string) (Settings, error
 
 // ChangeSettings writes change for userID, in one statement, and answers the
 // settings as kept after it; a change of nothing reads them. With no
-// database nothing is kept, and the answer is the first values.
+// database nothing is kept, and the answer is the first values. A change,
+// one of nothing too, is ErrAccountDeleted once the account's deletion has
+// begun (asAccount).
 func (s *Store) ChangeSettings(ctx context.Context, userID string, change SettingsChange) (Settings, error) {
-	if change.WatchlistByKind == nil || s == nil || s.p == nil || userID == "" {
+	if s == nil || s.p == nil || userID == "" {
 		return s.GetSettings(ctx, userID)
 	}
 	var out Settings
-	err := s.p.QueryRow(ctx,
-		`INSERT INTO account_settings (user_id, watchlist_by_kind, updated_at)
-		 VALUES ($1, $2, now())
-		 ON CONFLICT (user_id) DO UPDATE
-		   SET watchlist_by_kind = EXCLUDED.watchlist_by_kind,
-		       updated_at        = now()
-		 RETURNING watchlist_by_kind`,
-		userID, *change.WatchlistByKind).Scan(&out.WatchlistByKind)
+	err := s.asAccount(ctx, userID, func(tx pgx.Tx) error {
+		if change.WatchlistByKind == nil {
+			err := tx.QueryRow(ctx,
+				`SELECT watchlist_by_kind FROM account_settings WHERE user_id = $1`,
+				userID).Scan(&out.WatchlistByKind)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
+			return err
+		}
+		return tx.QueryRow(ctx,
+			`INSERT INTO account_settings (user_id, watchlist_by_kind, updated_at)
+			 VALUES ($1, $2, now())
+			 ON CONFLICT (user_id) DO UPDATE
+			   SET watchlist_by_kind = EXCLUDED.watchlist_by_kind,
+			       updated_at        = now()
+			 RETURNING watchlist_by_kind`,
+			userID, *change.WatchlistByKind).Scan(&out.WatchlistByKind)
+	})
 	if err != nil {
 		return Settings{}, err
 	}

@@ -90,6 +90,22 @@ func postFeedback(st *store.Store, op *openproject.Client) http.HandlerFunc {
 			http.Error(w, "no subject", http.StatusUnauthorized)
 			return
 		}
+		// Nothing is filed for an account whose deletion has begun: 401
+		// account_deleted, as its writes, or 503 where the check waited too
+		// long for that deletion to end. Where the check itself fails with
+		// the caller still there, it is logged and the report taken, as a
+		// report whose fingerprint cannot be kept is filed all the same;
+		// where the caller went, it is answered as a failed request.
+		if err := st.CheckAccount(r.Context(), userID); err != nil {
+			if accountRefused(w, r, err, "a bug report") {
+				return
+			}
+			if r.Context().Err() != nil {
+				storeFailed(w, r, err)
+				return
+			}
+			logFailure(r, "the database", "the account's check, the report taken all the same", err)
+		}
 		if op == nil {
 			// OPENPROJECT_TOKEN unset — feature off (local dev,
 			// self-host installs). Clients treat 503 as "don't report".
