@@ -406,7 +406,9 @@ are judged against:
   `chino_player_resume_outcomes_total{outcome}` (`resume_accept`,
   `resume_decline`), `chino_player_stall_recoveries_total` (`stall_recover`),
   `chino_player_progress_saves_total`, and `chino_api_http_requests_total` and
-  `chino_api_http_request_duration_seconds` by route and status.
+  `chino_api_http_request_duration_seconds` by route and status: an answer
+  cut off with the status it went out with, a handler's panic before any
+  as `500`.
 
 What chino-web sends, and how often, is in its README.
 
@@ -575,9 +577,24 @@ restart.
 
 What failed is logged on the server, once, on one line: the request's
 method and route (its path, quoted, where it has none), and the error's text
-with its credentials and every query value blanked out (a search's words
-among them), its control characters escaped and cut to 256 bytes. The caller
-gets a fixed line that says what it cannot have, never the error's text.
+with its credentials blanked out (a URL's userinfo and every query value,
+a search's words among them, and a fragment's; `Basic` and `Bearer`
+credentials; credential headers quoted in text, as `Name: value`,
+`name=value` or `name = value`: `Authorization` and `Proxy-Authorization`
+as HTTP writes them to the value's end, and in any other case where what
+follows the name has a value's shape, so that prose naming one stays, and
+every pair of a cookie line, one with a space in it too; the JSON fields
+`token`, `access_token`, `accessToken`, `refresh_token`, `refreshToken`,
+`id_token`, `idToken`, `stream_token`, `jwt`, `session`, `password`,
+`secret`, `client_secret`, `clientSecret`, `api_key`, `apikey`, and those
+named for the headers, `authorization`, `proxy-authorization`, `cookie`,
+`set-cookie`, `x-account-deletion-token` and `x-api-key`), its control
+characters escaped and cut to 256 bytes. The lines of a notice's change,
+the subtitle languages and a bug report's screenshot and fingerprint are at
+`WARN`, those of account deletion at `ERROR` (`WARN` where portal-api is
+asked once more); a viewer gone before the answer is no failure, at `INFO`.
+The caller gets a fixed line that says what it cannot have, never the
+error's text.
 
 - katalog-api failing a route answers `502` `catalog unavailable`, as plain
   text; the lists (`GET /api/v1/items`) and search answer it as their code,
@@ -588,10 +605,33 @@ gets a fixed line that says what it cannot have, never the error's text.
   (katalog-manager's artwork, portraits too). Its error answer keeps its
   status and is answered a line of chino-api's own, as plain text: the same
   line for `500` or more, the status's words (`Not Found`) below; of its
-  headers only `Retry-After` and `Content-Range` go on, and the first bytes
-  of an answer of `500` or more are logged. An answer below `400` is passed
-  on as it is. An admin's packaging that katalog-manager does not answer:
-  `502` `packaging unavailable`.
+  headers only `Retry-After` (seconds or an HTTP date) and `Content-Range`
+  (`bytes …/…`) go on, and the first bytes of an answer of `500` or more
+  are logged, but for a `503` with a `Retry-After` (busy: a player asks
+  again). An answer below `400` goes on with its body and, of its headers,
+  `Content-Type`, `Content-Length`, `Content-Encoding`, `Content-Range`,
+  `Accept-Ranges`, `Cache-Control`, `Expires`, `ETag`, `Last-Modified`,
+  `Vary` and `Retry-After`, with `X-Content-Type-Options: nosniff`. Its
+  `Content-Type` goes on only as a type the media routes serve: video,
+  audio, fonts, images but SVG, the playlists
+  (`application/vnd.apple.mpegurl`, `application/x-mpegurl`), `text/vtt`,
+  the subtitle formats (`text/x-ssa`, `application/pgs`,
+  `application/x-vobsub`, `application/dvb-subtitles`), `text/plain`,
+  `application/json`, `application/octet-stream` and `multipart/byteranges`,
+  never one of `+xml`; of its parameters only a `charset` of `utf-8` and the
+  `boundary` of `multipart/byteranges`. Any other type, or none, goes on as
+  `application/octet-stream`. An answer the upstream breaks off is logged;
+  where nothing of it has gone out yet it is `502` with the upstream's line,
+  and where bytes of it have the caller's is cut off too, never ended as if
+  whole. No upstream's redirect is followed: here a `3xx` goes on as its
+  status, without its `Location`; on the other routes it is a failure, as
+  any status the call does not take, but for an admin's packaging, whose
+  answer goes on as katalog-manager gives it, but for a redirect's
+  `Location`. A capped viewer's Zap feed or
+  packaged ids that are not their list, that chino-stream breaks off, or
+  that are longer than the 8 MiB held of them to be filtered, are `502`
+  `playback unavailable`. An admin's packaging that
+  katalog-manager does not answer: `502` `packaging unavailable`.
 - A bug report OpenProject does not take: `502` `bug reports unavailable`.
 - portal-api failing account deletion or a notice's change is answered as
   [Deleting an account](#deleting-an-account) and [Notices](#notices) say;
@@ -657,7 +697,10 @@ server; a client offers no download while it is `false`.
 
 ## Configuration
 
-Configured entirely through environment variables (see `internal/config`):
+Configured entirely through environment variables (see `internal/config`).
+An upstream's base address (`KATALOG_BASE_URL`, `STREAM_BASE_URL`,
+`ARTWORK_BASE_URL`, `KATALOG_MANAGER_URL`, `PORTAL_BASE_URL`,
+`OPENPROJECT_URL`) is read without the slashes it ends in.
 
 | Var | Purpose |
 |---|---|

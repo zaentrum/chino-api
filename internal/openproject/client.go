@@ -44,16 +44,23 @@ type Client struct {
 // New wires the client. 15 s total timeout — these are small JSON
 // bodies / screenshot uploads; anything slower means OpenProject is
 // unhealthy and the report should fail fast rather than pile up
-// goroutines behind a stuck upstream.
+// goroutines behind a stuck upstream. It does not follow a redirect
+// (answerRedirect).
 func New(baseURL, token string, projectID, bugTypeID int) *Client {
 	return &Client{
 		BaseURL:   strings.TrimRight(baseURL, "/"),
 		Token:     token,
 		ProjectID: projectID,
 		BugTypeID: bugTypeID,
-		HTTP:      &http.Client{Timeout: 15 * time.Second},
+		HTTP:      &http.Client{Timeout: 15 * time.Second, CheckRedirect: answerRedirect},
 	}
 }
+
+// answerRedirect is the CheckRedirect of the client: OpenProject's redirect
+// is its answer, and is not followed (http.ErrUseLastResponse), so that a
+// request, and the token it carries, goes to OpenProject alone. A 3xx fails
+// the call, as any status it does not take.
+func answerRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 // WorkPackageURL is the human-facing link for a ticket, returned to the
 // client so a manual reporter can follow their report.

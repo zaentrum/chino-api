@@ -193,13 +193,13 @@ func postFeedback(st *store.Store, op *openproject.Client) http.HandlerFunc {
 			name := fmt.Sprintf("screenshot-%d.%s", wpID, ext)
 			if err := op.AddAttachment(ctx, wpID, name, screenshotCT, screenshot); err != nil {
 				// Non-fatal: the ticket exists, just without the image.
-				slog.Warn("feedback: attach screenshot failed", "wp", wpID, "err", err)
+				logFailureAt(slog.LevelWarn, r, "OpenProject", fmt.Sprintf("the screenshot of work package %d, filed without it", wpID), err)
 			}
 		}
 		if rep.Fingerprint != "" && rep.Kind != "manual" {
 			if err := st.UpsertFeedbackReport(ctx, rep.Fingerprint, wpID); err != nil {
 				// Non-fatal: worst case the next recurrence opens a dup.
-				slog.Warn("feedback: record fingerprint failed", "fingerprint", rep.Fingerprint, "err", err)
+				logFailureAt(slog.LevelWarn, r, "the database", fmt.Sprintf("the fingerprint of work package %d, filed all the same", wpID), err)
 			}
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"slices"
@@ -475,6 +477,13 @@ func catalogFailedCode(w http.ResponseWriter, r *http.Request, err error) {
 // caller's answer is the route's fixed line, whichever it was: a request is
 // answered its status also when its viewer went.
 func logFailure(r *http.Request, upstream, what string, err error) {
+	logFailureAt(slog.LevelInfo, r, upstream, what, err)
+}
+
+// logFailureAt is logFailure with the failure logged at level (logErrorAt),
+// the WARN or ERROR a route's line is kept at. A viewer who went is logged
+// at INFO: no failure of the server's.
+func logFailureAt(level slog.Level, r *http.Request, upstream, what string, err error) {
 	about := ""
 	if what != "" {
 		about = " (" + what + ")"
@@ -483,7 +492,26 @@ func logFailure(r *http.Request, upstream, what string, err error) {
 		log.Printf("chino-api: %s %s: the viewer went before %s answered%s", r.Method, logline.Route(r), upstream, about)
 		return
 	}
-	log.Printf("chino-api: %s %s: %s failed%s: %s", r.Method, logline.Route(r), upstream, about, logline.Quote(err.Error()))
+	logErrorAt(level, r, upstream+" failed"+about, err)
+}
+
+// logError logs, on the server, what of r failed with err, where the
+// viewer's going plays no part (a call on a context of its own): with the
+// request's method and route, and err's text through logline.Quote.
+func logError(r *http.Request, what string, err error) {
+	logErrorAt(slog.LevelInfo, r, what, err)
+}
+
+// logErrorAt is logError at level: a line at INFO is written as chino-api's
+// other lines are, through log; one above it through slog, which gives it its
+// level (main's JSON handler writes it as "level").
+func logErrorAt(level slog.Level, r *http.Request, what string, err error) {
+	line := fmt.Sprintf("chino-api: %s %s: %s: %s", r.Method, logline.Route(r), what, logline.Quote(err.Error()))
+	if level <= slog.LevelInfo {
+		log.Print(line)
+		return
+	}
+	slog.Log(r.Context(), level, line)
 }
 
 func whoAmI(w http.ResponseWriter, r *http.Request) {

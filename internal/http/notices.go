@@ -54,7 +54,7 @@ func readNotice(pc *portal.Client) http.HandlerFunc {
 			return
 		}
 		unread, err := pc.ReadNotice(r.Context(), bearerFrom(r), id)
-		if noticeChanged(w, pc, err) {
+		if noticeChanged(w, r, pc, err) {
 			writeJSON(w, http.StatusOK, map[string]any{"unread": unread})
 		}
 	}
@@ -64,7 +64,7 @@ func readNotice(pc *portal.Client) http.HandlerFunc {
 func readAllNotices(pc *portal.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		read, err := pc.ReadAllNotices(r.Context(), bearerFrom(r))
-		if noticeChanged(w, pc, err) {
+		if noticeChanged(w, r, pc, err) {
 			writeJSON(w, http.StatusOK, map[string]any{"read": read, "unread": 0})
 		}
 	}
@@ -78,7 +78,7 @@ func deleteNotice(pc *portal.Client) http.HandlerFunc {
 			noNotice(w)
 			return
 		}
-		if noticeChanged(w, pc, pc.DeleteNotice(r.Context(), bearerFrom(r), id)) {
+		if noticeChanged(w, r, pc, pc.DeleteNotice(r.Context(), bearerFrom(r), id)) {
 			w.WriteHeader(http.StatusNoContent)
 		}
 	}
@@ -88,9 +88,9 @@ func noNotice(w http.ResponseWriter) {
 	writeJSON(w, http.StatusNotFound, map[string]any{"error": "not_found", "message": "No such notice."})
 }
 
-// noticeChanged answers a change portal-api did not make; true when it made
-// it, and the caller answers.
-func noticeChanged(w http.ResponseWriter, pc *portal.Client, err error) bool {
+// noticeChanged answers r, a change portal-api did not make; true when it
+// made it, and the caller answers.
+func noticeChanged(w http.ResponseWriter, r *http.Request, pc *portal.Client, err error) bool {
 	switch {
 	case err == nil:
 		return true
@@ -100,7 +100,7 @@ func noticeChanged(w http.ResponseWriter, pc *portal.Client, err error) bool {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "notices_unavailable",
 			"message": "This server keeps no notices."})
 	default:
-		slog.Warn("notices: portal-api did not change a notice", "err", err)
+		logFailureAt(slog.LevelWarn, r, "portal-api", "a notice's change", err)
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "notices_unavailable",
 			"message": "Notices cannot be changed right now. Try again later."})
 	}

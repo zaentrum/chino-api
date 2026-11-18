@@ -2,6 +2,7 @@ package http
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/zaentrum/chino-api/internal/config"
@@ -19,10 +20,16 @@ import (
 // account, and it keeps them for nobody.
 func appConfig(cfg config.Config, keepsSettings bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Non-secret + identical for every caller, so open CORS and a
-		// short cache: it changes only when the deployment is reconfigured.
+		// Non-secret, so open CORS, and a short cache: it changes only when
+		// the deployment is reconfigured. Identical for every caller where
+		// PUBLIC_BASE_URL names the origin, and shared caches may keep it;
+		// else apiBase is the request's own, and only the caller's may.
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Cache-Control", "public, max-age=300")
+		if cfg.PublicBaseURL != "" {
+			w.Header().Set("Cache-Control", "public, max-age=300")
+		} else {
+			w.Header().Set("Cache-Control", "private, max-age=300")
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"product":      "chino",
 			"apiBase":      publicAPIBase(cfg, r),
@@ -65,16 +72,30 @@ func feedbackEnabled(cfg config.Config) bool {
 
 // publicAPIBase reports the external "<origin>/api" this server is reached
 // at. Prefers the configured canonical PublicBaseURL; otherwise derives the
-// origin from the request, honouring the reverse-proxy X-Forwarded-Proto.
+// origin from the request: its Host where it is a host in its own syntax
+// (hostSyntax: a name or an address, a port of 1 to 65535, no path, no
+// userinfo), with the reverse proxy's X-Forwarded-Proto where it is http or
+// https. A Host of any other form gives "/api", the API at the origin the
+// caller reached.
 func publicAPIBase(cfg config.Config, r *http.Request) string {
 	if cfg.PublicBaseURL != "" {
 		return strings.TrimRight(cfg.PublicBaseURL, "/") + "/api"
 	}
+	if !hostSyntax.MatchString(r.Host) {
+		return "/api"
+	}
 	scheme := "https"
-	if xf := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); xf != "" {
-		scheme = xf
-	} else if r.TLS == nil {
+	if r.TLS == nil {
 		scheme = "http"
+	}
+	if xf, _, _ := strings.Cut(r.Header.Get("X-Forwarded-Proto"), ","); strings.EqualFold(strings.TrimSpace(xf), "http") ||
+		strings.EqualFold(strings.TrimSpace(xf), "https") {
+		scheme = strings.ToLower(strings.TrimSpace(xf))
 	}
 	return scheme + "://" + r.Host + "/api"
 }
+
+// hostSyntax is a Host in its own syntax: a DNS name or an IPv4 address, or
+// an IPv6 address in brackets, and a port of 1 to 65535.
+var hostSyntax = regexp.MustCompile(`^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*|\[[0-9A-Fa-f:.]+\])` +
+	`(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?$`)

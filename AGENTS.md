@@ -38,8 +38,8 @@ The workflow `.github/workflows/build.yml` runs `go build ./...`,
 throwaway PostgreSQL 16 for the tests that need one. The tests
 of what chino-api keeps (progress, watched, finished titles, Continue
 Watching, account deletion and the writes refused after it, a capped viewer's
-lists, the account's settings, a database error's answer, lists by kind: 34
-of the 165) need a
+lists, the account's settings, a database error's answer, lists by kind: 35
+of the 186) need a
 PostgreSQL in which they may create and drop schemas, named by
 `CHINO_API_TEST_DATABASE_URL`; each works in a schema of its own and drops it.
 Without it they are skipped, and where `CI` is set (GitHub's runners set it)
@@ -79,9 +79,13 @@ inside its cluster ([how it is deployed](https://github.com/zaentrum/zaentrum/bl
 - The Kafka tail behind `/api/v1/events`: no test publishes through the
   broker or reads a topic. Tested are the topics' names, the wait for a topic,
   a message made into a note, and that the handler opens with `: connected`.
-- Bug reports: one test posts one to `POST /api/v1/feedback` that a fake
-  OpenProject fails; none is filed, and the OpenProject client
-  (`internal/openproject`) has no test of its own.
+- Bug reports: four tests post one to `POST /api/v1/feedback`, against a
+  fake OpenProject that fails it, one that redirects it, and two that file
+  it and fail its screenshot; the OpenProject client (`internal/openproject`)
+  has no test of its own. No test fails the database where a report's
+  fingerprint is kept, or where an account's data is deleted after
+  portal-api deleted the account: those two lines' levels (`WARN`, `ERROR`)
+  are unchecked.
 - Named watchlists: creating one runs in one test, through the store, as a
   fixture; renaming and deleting one, and the routes that create, rename and
   delete (`POST /api/v1/me/watchlists`, `PATCH` and `DELETE`

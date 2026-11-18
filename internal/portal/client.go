@@ -113,13 +113,21 @@ func (c *Client) DeleteAccount(ctx context.Context, bearer, token string) error 
 	return &Answered{Status: resp.StatusCode}
 }
 
+// New is the client of portal-api at baseURL. Neither of its clients follows
+// a redirect (answerRedirect).
 func New(baseURL string) *Client {
 	return &Client{
 		BaseURL:  strings.TrimRight(baseURL, "/"),
-		HTTP:     &http.Client{Timeout: 5 * time.Second},
-		Deletion: &http.Client{Timeout: 30 * time.Second},
+		HTTP:     &http.Client{Timeout: 5 * time.Second, CheckRedirect: answerRedirect},
+		Deletion: &http.Client{Timeout: 30 * time.Second, CheckRedirect: answerRedirect},
 	}
 }
+
+// answerRedirect is the CheckRedirect of the clients towards portal-api: its
+// redirect is its answer, and is not followed (http.ErrUseLastResponse), so
+// that a request, and the bearer and the deletion token it carries, goes to
+// portal-api alone. A 3xx is answered as any status the call does not take.
+func answerRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 // Enabled reports whether a portal base URL is configured.
 func (c *Client) Enabled() bool { return c != nil && c.BaseURL != "" }

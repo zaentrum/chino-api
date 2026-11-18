@@ -73,30 +73,51 @@ var (
 )
 
 // Middleware records request rate + latency. Captures the chi-route
-// pattern (not the literal URL) so cardinality stays bounded.
+// pattern (not the literal URL) so cardinality stays bounded. A request
+// whose handler panics is counted too, and the panic goes on: an answer cut
+// off (http.ErrAbortHandler) with the status it went out with, one that had
+// none out yet as 500, what middleware.Recoverer answers it.
 func Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusRecorder{ResponseWriter: w, status: 200}
+		defer func() {
+			v := recover()
+			status := sw.status
+			if v != nil && !sw.wrote {
+				status = http.StatusInternalServerError
+			}
+			route := chi.RouteContext(r.Context()).RoutePattern()
+			if route == "" {
+				route = r.URL.Path
+			}
+			label := strconv.Itoa(status)
+			HTTPRequests.WithLabelValues(route, label).Inc()
+			HTTPDuration.WithLabelValues(route, label).Observe(time.Since(start).Seconds())
+			if v != nil {
+				panic(v)
+			}
+		}()
 		next.ServeHTTP(sw, r)
-		route := chi.RouteContext(r.Context()).RoutePattern()
-		if route == "" {
-			route = r.URL.Path
-		}
-		status := strconv.Itoa(sw.status)
-		HTTPRequests.WithLabelValues(route, status).Inc()
-		HTTPDuration.WithLabelValues(route, status).Observe(time.Since(start).Seconds())
 	})
 }
 
+// statusRecorder is the status an answer went out with, and whether one
+// did (wrote): a Write without one is 200's.
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
+	wrote  bool
 }
 
 func (s *statusRecorder) WriteHeader(code int) {
-	s.status = code
+	s.status, s.wrote = code, true
 	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Write(b []byte) (int, error) {
+	s.wrote = true
+	return s.ResponseWriter.Write(b)
 }
 
 // Flush forwards http.Flusher through the wrapper — embedding the

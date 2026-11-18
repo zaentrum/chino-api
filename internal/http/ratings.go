@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -117,12 +118,23 @@ func catalogUnavailable(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 // captured is an answer ProxyStream wrote, kept to be filtered before it
-// goes out.
+// goes out: at most maxHeld bytes of its body. A Write past them is refused
+// (errOverHeld), and over is set.
 type captured struct {
 	header http.Header
 	code   int
 	body   bytes.Buffer
+	over   bool
 }
+
+// maxHeld is the most of a body captured holds: far more than a list of
+// chino-stream's comes to, and a bound on what one request keeps in memory.
+const maxHeld = 8 << 20
+
+// errOverHeld is an answer of chino-stream's longer than maxHeld, which
+// filteredStream does not hold: 502 errPlayback, and logged as
+// chino-stream's.
+var errOverHeld = fmt.Errorf("chino-stream's answer is longer than the %d MiB held of it", maxHeld>>20)
 
 func (c *captured) Header() http.Header { return c.header }
 func (c *captured) WriteHeader(code int) {
@@ -132,6 +144,10 @@ func (c *captured) WriteHeader(code int) {
 }
 func (c *captured) Write(b []byte) (int, error) {
 	c.WriteHeader(http.StatusOK)
+	if c.over || c.body.Len()+len(b) > maxHeld {
+		c.over = true
+		return 0, errOverHeld
+	}
 	return c.body.Write(b)
 }
 
@@ -140,7 +156,9 @@ func (c *captured) Write(b []byte) (int, error) {
 // filter takes out of its JSON what the cap does not allow. An uncapped
 // viewer's answer is proxied as before; an answer that is no 200 goes out as
 // ProxyStream wrote it, an upstream's error answer as a line of chino-api's
-// own.
+// own; a 200 that is not the list is 502 errPlayback (errNotAList), and so
+// are one chino-stream broke off, of which nothing has gone out, and one
+// longer than maxHeld, which is not held (errOverHeld).
 func (g gate) filteredStream(kc *katalog.Client, path string,
 	filter func(ctx context.Context, body []byte) ([]byte, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -149,11 +167,25 @@ func (g gate) filteredStream(kc *katalog.Client, path string,
 			return
 		}
 		c := &captured{header: http.Header{}}
-		kc.ProxyStream(c, r, path, bearerFrom(r))
+		if !proxyWhole(kc, c, r, path) {
+			http.Error(w, errPlayback, http.StatusBadGateway)
+			return
+		}
+		if c.over {
+			logError(r, "chino-stream failed", errOverHeld)
+			http.Error(w, errPlayback, http.StatusBadGateway)
+			return
+		}
 		body := c.body.Bytes()
 		if c.code == http.StatusOK {
 			var err error
 			if body, err = filter(r.Context(), body); err != nil {
+				if errors.Is(err, errNotAList) {
+					// chino-stream's answer, not the catalog's.
+					logError(r, "chino-stream failed", err)
+					http.Error(w, errPlayback, http.StatusBadGateway)
+					return
+				}
 				catalogUnavailable(w, r, err)
 				return
 			}
@@ -168,17 +200,43 @@ func (g gate) filteredStream(kc *katalog.Client, path string,
 	}
 }
 
+// proxyWhole is ProxyStream's answer to r of path, into c, and reports
+// whether it is whole: false where the upstream broke it off after its first
+// bytes, which ProxyStream logs and cuts off with http.ErrAbortHandler, here
+// with nothing of it gone to the caller. Any other panic goes on.
+func proxyWhole(kc *katalog.Client, c *captured, r *http.Request, path string) (whole bool) {
+	defer func() {
+		if v := recover(); v != nil {
+			if v != http.ErrAbortHandler {
+				panic(v)
+			}
+			whole = false
+		}
+	}()
+	kc.ProxyStream(c, r, path, bearerFrom(r))
+	return true
+}
+
+// errNotAList is an answer of chino-stream's, of 200, that is not the list it
+// was asked for (filteredStream): 502 errPlayback, and logged as
+// chino-stream's.
+var errNotAList = errors.New("chino-stream's answer is not its list")
+
+// errPlayback is the answer, with 502, of a route whose chino-stream did not
+// answer as it does.
+const errPlayback = "playback unavailable"
+
 // zapFeed takes out of chino-stream's Zap feed ({"items": [{"id": ...}, ...],
 // ...}) the cards whose titles the viewer's cap does not allow, keeping
 // everything else of it as it is.
 func (g gate) zapFeed(ctx context.Context, body []byte) ([]byte, error) {
 	var feed map[string]json.RawMessage
 	if err := json.Unmarshal(body, &feed); err != nil {
-		return nil, fmt.Errorf("zap feed: %w", err)
+		return nil, fmt.Errorf("%w: zap feed: %w", errNotAList, err)
 	}
 	var items []json.RawMessage
 	if err := json.Unmarshal(feed["items"], &items); err != nil && feed["items"] != nil {
-		return nil, fmt.Errorf("zap feed items: %w", err)
+		return nil, fmt.Errorf("%w: zap feed items: %w", errNotAList, err)
 	}
 	ids := make([]string, len(items))
 	for i, it := range items {
@@ -213,11 +271,11 @@ func (g gate) zapFeed(ctx context.Context, body []byte) ([]byte, error) {
 func (g gate) packagedIDs(ctx context.Context, body []byte) ([]byte, error) {
 	var list map[string]json.RawMessage
 	if err := json.Unmarshal(body, &list); err != nil {
-		return nil, fmt.Errorf("packaged ids: %w", err)
+		return nil, fmt.Errorf("%w: packaged ids: %w", errNotAList, err)
 	}
 	var ids []string
 	if err := json.Unmarshal(list["ids"], &ids); err != nil && list["ids"] != nil {
-		return nil, fmt.Errorf("packaged ids: %w", err)
+		return nil, fmt.Errorf("%w: packaged ids: %w", errNotAList, err)
 	}
 	allowed, err := g.visibleIDs(ctx, ids)
 	if err != nil {

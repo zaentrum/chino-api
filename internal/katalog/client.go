@@ -17,8 +17,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"net/url"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -76,13 +79,22 @@ type Client struct {
 
 // New wires the read client. Callers that also need streaming +
 // artwork must populate the other base URLs afterwards (see main.go).
+// Neither of its clients follows a redirect (answerRedirect).
 func New(baseURL string) *Client {
 	return &Client{
 		BaseURL:    baseURL,
-		HTTP:       &http.Client{Timeout: 20 * time.Second},
-		HTTPStream: &http.Client{Timeout: 0},
+		HTTP:       &http.Client{Timeout: 20 * time.Second, CheckRedirect: answerRedirect},
+		HTTPStream: &http.Client{Timeout: 0, CheckRedirect: answerRedirect},
 	}
 }
+
+// answerRedirect is the CheckRedirect of the clients towards the upstreams:
+// an upstream's redirect is its answer, and is not followed
+// (http.ErrUseLastResponse), so that a request, and the bearer it carries,
+// goes to the upstream it was made for alone. A call of the catalog's takes
+// a 3xx for a failure, as any status but 2xx; ProxyStream passes it on
+// without its Location, a header not of proxyHeaders.
+func answerRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 // Item is the projection chino-web consumes. Mirrors katalog-api's wire
 // shape (snake_case) with a couple of chino-api-only fields appended:
@@ -756,12 +768,124 @@ func (c *Client) PlayInfoDurationMs(ctx context.Context, bearer, itemID string) 
 // (500 or more), a fixed line that says what the caller cannot have.
 type proxyUpstream struct{ name, answer string }
 
-// proxyErrorHeaders are the headers of an upstream's error answer (400 or
-// more) ProxyStream passes on, what a client needs to act on it: Retry-After,
-// when to ask again (a 429, a 503), and Content-Range, the length a range
-// has to fall within (a 416). It passes on no other header of such an
-// answer, and none of its body.
-var proxyErrorHeaders = []string{"Retry-After", "Content-Range"}
+// proxyHeaders are the headers of an upstream's answer below 400 that
+// ProxyStream passes on, what a player or a browser needs of it: what the
+// body is and how long (Content-Type, Content-Length, Content-Encoding), the
+// ranges of it (Content-Range, Accept-Ranges), how long it may be kept and
+// how it is revalidated (Cache-Control, Expires, ETag, Last-Modified, Vary),
+// and when to ask again (Retry-After). proxyErrorHeaders are those of an
+// error answer (400 or more): Retry-After, when to ask again (a 429, a 503),
+// and Content-Range, the length a range has to fall within (a 416). No other
+// header of an upstream's goes on, and none of an error answer's body.
+var (
+	proxyHeaders = []string{"Content-Type", "Content-Length", "Content-Encoding", "Content-Range", "Accept-Ranges",
+		"Cache-Control", "Expires", "ETag", "Last-Modified", "Vary", "Retry-After"}
+	proxyErrorHeaders = []string{"Retry-After", "Content-Range"}
+)
+
+// contentRange is a Content-Range in its own syntax: bytes first-last/length,
+// the length * where it is not known, or bytes */length.
+var contentRange = regexp.MustCompile(`^bytes (?:[0-9]{1,19}-[0-9]{1,19}/(?:[0-9]{1,19}|\*)|\*/[0-9]{1,19})$`)
+
+// servedTypes are the media types an upstream's answer below 400 goes on
+// with: what the routes ProxyStream serves answer, as chino-stream's and
+// katalog-manager's handlers set them and the routes' tests have them, each
+// with its routes. One that ends in "/" is a family, each of its types but
+// one in +xml and an SVG. An answer of any other type, or of none, goes on
+// as application/octet-stream.
+var servedTypes = []string{
+	"video/",                        // segments and init segments (…/seg-N.m4s, …/N.m4s, …/init.mp4), the progressive /play
+	"audio/",                        // an audio track's segments and init segments (…/play/audio/…, …/play/aN/…)
+	"image/",                        // /poster, /backdrop, /people/{id}/profile, /play/trickplay/sprite-N.jpg
+	"font/",                         // /play/fonts/{id}.{ext}
+	"application/vnd.apple.mpegurl", // every .m3u8: master.m3u8, index.m3u8, playlist.m3u8, iframes.m3u8
+	"application/x-mpegurl",         // the same, by its older name
+	"text/vtt",                      // …/seg-N.vtt, /play/subtitles/{n}.vtt, /play/subs/{id}.vtt, /play/trickplay/thumbnails.vtt
+	"text/x-ssa",                    // /play/subs/{id}.ass, a subtitle's styled original
+	"application/pgs",               // /play/subs/{id}.vtt of a sidecar subtitle in a bitmap format
+	"application/x-vobsub",          // the same
+	"application/dvb-subtitles",     // the same
+	"text/plain",                    // /play/prewarm's 202
+	"application/json",              // /play/info, an extra's /play/info, /play/packaged-ids, /play/zap-feed
+	"application/octet-stream",      // /play/fonts/{id}.bin, and a file of no type the upstream knows
+	"multipart/byteranges",          // an answer of several ranges, on any route that serves a range
+}
+
+// servedType is v, an upstream's Content-Type, as it goes on: its media type
+// where servedTypes has it, with of its parameters a charset of utf-8 and,
+// of multipart/byteranges, its boundary, what reading the body needs; else
+// application/octet-stream.
+func servedType(v string) string {
+	const opaque = "application/octet-stream"
+	mt, params, err := mime.ParseMediaType(v)
+	if err != nil {
+		return opaque
+	}
+	family, sub, _ := strings.Cut(mt, "/")
+	if strings.HasSuffix(sub, "+xml") || family == "image" && strings.HasPrefix(sub, "svg") ||
+		!slices.ContainsFunc(servedTypes, func(t string) bool { return t == mt || t == family+"/" }) {
+		return opaque
+	}
+	kept := map[string]string{}
+	if strings.EqualFold(params["charset"], "utf-8") {
+		kept["charset"] = "utf-8"
+	}
+	if b := params["boundary"]; b != "" && mt == "multipart/byteranges" {
+		kept["boundary"] = b
+	}
+	if typ := mime.FormatMediaType(mt, kept); typ != "" {
+		return typ
+	}
+	return opaque
+}
+
+// passHeaders sets on w each of names that from, an upstream's answer, has in
+// its own syntax: Retry-After as seconds or an HTTP date, Content-Range as
+// contentRange has it, Content-Type as servedType has it, one of them (one
+// sent more than once as application/octet-stream); any other as it is.
+func passHeaders(w http.ResponseWriter, from http.Header, names []string) {
+	for _, name := range names {
+		if name == "Content-Type" {
+			switch vs := from.Values(name); len(vs) {
+			case 0:
+			case 1:
+				w.Header().Set(name, servedType(vs[0]))
+			default:
+				w.Header().Set(name, "application/octet-stream")
+			}
+			continue
+		}
+		for _, v := range from.Values(name) {
+			switch name {
+			case "Retry-After":
+				if !retryAfter(v) {
+					continue
+				}
+			case "Content-Range":
+				if !contentRange.MatchString(v) {
+					continue
+				}
+			}
+			w.Header().Add(name, v)
+		}
+	}
+}
+
+// bodied reports whether an answer of status carries a body: every one
+// below 400 but 204 No Content and 304 Not Modified (1xx is not passed on).
+func bodied(status int) bool {
+	return status != http.StatusNoContent && status != http.StatusNotModified
+}
+
+// retryAfter reports whether v is a Retry-After in its own syntax: a number
+// of seconds, or an HTTP date.
+func retryAfter(v string) bool {
+	if v != "" && len(v) <= 10 && strings.Trim(v, "0123456789") == "" {
+		return true
+	}
+	_, err := http.ParseTime(v)
+	return err == nil
+}
 
 var (
 	proxyCatalog = proxyUpstream{"katalog-api", "catalog unavailable"}
@@ -771,8 +895,8 @@ var (
 
 // ProxyStream forwards the named upstream path to the appropriate
 // service, copying Range + If-None-Match + Authorization + query string
-// and streaming a response below 400 (status, headers such as ETag, body)
-// verbatim. Routing is by path prefix because
+// and streaming a response below 400: its status and body, and of its
+// headers proxyHeaders. Routing is by path prefix because
 // chino-api stitches three upstreams behind one client today:
 //
 //	/api/play/...    → StreamBaseURL  (chino-stream)
@@ -784,8 +908,11 @@ var (
 // automatically.
 //
 // An upstream that does not answer is 502 with a fixed line, what the caller
-// cannot have (proxyUpstream), and an upstream's error answer is answered by
-// refused; what failed is logged on the server.
+// cannot have (proxyUpstream), an upstream's error answer is answered by
+// refused, and one it breaks off is that 502 where none of it has gone out
+// yet, and cuts the caller's off where bytes of it have; what failed is
+// logged on the server, a viewer who went not. A redirect goes on as its
+// status, without its Location: HTTPStream does not follow it.
 func (c *Client) ProxyStream(w http.ResponseWriter, r *http.Request, upstreamPath, bearer string) {
 	base, upstream := c.BaseURL, proxyCatalog
 	switch {
@@ -841,41 +968,85 @@ func (c *Client) ProxyStream(w http.ResponseWriter, r *http.Request, upstreamPat
 		refused(w, r, upstream, resp)
 		return
 	}
-	for k, vs := range resp.Header {
-		// Which origins may read an answer is chino-api's to say, on its
-		// own routes: an upstream's Access-Control-* beside chino-api's
-		// would go out twice, and a browser refuses an answer with two.
-		if k == "Authorization" || strings.HasPrefix(k, "Access-Control-") {
-			continue
-		}
-		for _, v := range vs {
-			w.Header().Add(k, v)
-		}
+	// Nothing goes out before the upstream's first bytes are in: an answer it
+	// breaks off before them is 502 with upstream's line, and none of its
+	// headers.
+	body := &upstreamBody{r: resp.Body}
+	first := make([]byte, 4<<10)
+	n, _ := io.ReadAtLeast(body, first, 1)
+	if n == 0 && body.err != nil {
+		brokeOff(r, upstream, body)
+		http.Error(w, upstream.answer, http.StatusBadGateway)
+		return
 	}
+	// proxyHeaders alone, a body of no type as application/octet-stream, and
+	// a body taken for nothing but its type: which origins may read an answer
+	// is chino-api's to say, on its own routes.
+	passHeaders(w, resp.Header, proxyHeaders)
+	if w.Header().Get("Content-Type") == "" && bodied(resp.StatusCode) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+	}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
+	if n > 0 {
+		_, _ = w.Write(first[:n])
+	}
+	_, _ = io.Copy(w, body)
+	if body.err != nil && brokeOff(r, upstream, body) {
+		// Bytes of it are out: the caller's answer is cut off
+		// (http.ErrAbortHandler), so that it is not taken for the whole.
+		panic(http.ErrAbortHandler)
+	}
+}
+
+// brokeOff logs that upstream broke off its answer to r, body, and reports
+// true; where r's viewer went, which broke it off, it logs nothing and
+// reports false.
+func brokeOff(r *http.Request, upstream proxyUpstream, body *upstreamBody) bool {
+	if errors.Is(r.Context().Err(), context.Canceled) {
+		return false
+	}
+	log.Printf("chino-api: %s %s: %s broke off its answer after %d bytes: %s",
+		r.Method, logline.Route(r), upstream.name, body.n, logline.Quote(body.err.Error()))
+	return true
+}
+
+// upstreamBody is an upstream's body as ProxyStream copies it: how much of
+// it was read, and the error it broke off with, if any (io.EOF is its end).
+type upstreamBody struct {
+	r   io.Reader
+	n   int64
+	err error
+}
+
+func (b *upstreamBody) Read(p []byte) (int, error) {
+	n, err := b.r.Read(p)
+	b.n += int64(n)
+	if err != nil && err != io.EOF {
+		b.err = err
+	}
+	return n, err
 }
 
 // refused answers r with resp, an error answer of upstream (400 or more): its
 // status, with a fixed line of chino-api's own as plain text, upstream's for
 // 500 or more and the status's words (http.StatusText) for one below, and of
-// its headers proxyErrorHeaders alone. Of an answer of 500 or more the first
-// bytes are logged on the server, through logline.Quote; one below 500 (a
-// missing portrait, a stream token run out) is the caller's to act on, and
-// is not logged.
+// its headers proxyErrorHeaders alone, in their own syntax. Of an answer of
+// 500 or more the first bytes are logged on the server, through
+// logline.Quote, but for a 503 with a Retry-After, the upstream busy and
+// saying when to ask again, which a player does; one below 500 (a missing
+// portrait, a stream token run out) is the caller's to act on, and is not
+// logged.
 func refused(w http.ResponseWriter, r *http.Request, upstream proxyUpstream, resp *http.Response) {
 	line := http.StatusText(resp.StatusCode)
 	if resp.StatusCode >= http.StatusInternalServerError || line == "" {
 		line = upstream.answer
 	}
-	if resp.StatusCode >= http.StatusInternalServerError {
+	passHeaders(w, resp.Header, proxyErrorHeaders)
+	busy := resp.StatusCode == http.StatusServiceUnavailable && w.Header().Get("Retry-After") != ""
+	if resp.StatusCode >= http.StatusInternalServerError && !busy {
 		first, _ := io.ReadAll(io.LimitReader(resp.Body, logline.Max))
 		log.Printf("chino-api: %s %s: %s answered %d: %s", r.Method, logline.Route(r), upstream.name, resp.StatusCode, logline.Quote(string(first)))
-	}
-	for _, h := range proxyErrorHeaders {
-		for _, v := range resp.Header.Values(h) {
-			w.Header().Add(h, v)
-		}
 	}
 	http.Error(w, line, resp.StatusCode)
 }

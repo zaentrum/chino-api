@@ -92,7 +92,9 @@ const errPackaging = "packaging unavailable"
 // base, the caller's bearer with it: katalog-manager is a resource server of
 // the same realm and decides itself what the admin may do (its package
 // action is an admin's, its steps an admin's or the service account's). Its
-// answer comes back as it is, status, headers and body.
+// answer comes back as it is, status, headers and body, but for a redirect's
+// Location: a redirect is not followed (katalogManagerClient), and where it
+// points goes no further.
 func proxyToKatalogManager(w http.ResponseWriter, r *http.Request, base, method, path string) {
 	if base == "" {
 		http.Error(w, "katalog-manager is not configured (KATALOG_MANAGER_URL)", http.StatusServiceUnavailable)
@@ -103,7 +105,7 @@ func proxyToKatalogManager(w http.ResponseWriter, r *http.Request, base, method,
 		http.Error(w, "bad katalog-manager url", http.StatusInternalServerError)
 		return
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := katalogManagerClient.Do(req)
 	if err != nil {
 		logFailure(r, "katalog-manager", "", err)
 		http.Error(w, errPackaging, http.StatusBadGateway)
@@ -111,12 +113,24 @@ func proxyToKatalogManager(w http.ResponseWriter, r *http.Request, base, method,
 	}
 	defer resp.Body.Close()
 	for k, vs := range resp.Header {
+		if k == "Location" {
+			continue
+		}
 		for _, v := range vs {
 			w.Header().Add(k, v)
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+// katalogManagerClient is the client of the calls to katalog-manager, an
+// admin's packaging and the subtitle languages: katalog-manager's redirect
+// is its answer, and is not followed (http.ErrUseLastResponse), so that a
+// request, and the bearer it carries, goes to katalog-manager alone. Its
+// deadline is the request's.
+var katalogManagerClient = &http.Client{
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
 
 // katalogManagerRequest is a request to katalog-manager at base, under ctx,

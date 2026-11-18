@@ -70,7 +70,7 @@ func askPortal(ctx context.Context, r *http.Request, pc *portal.Client, token st
 	err := ask()
 	var answered *portal.Answered
 	if errors.Is(err, portal.ErrPortalUnavailable) && (!errors.As(err, &answered) || answered.Status >= 500) {
-		slog.Warn("account deletion: portal-api gave no answer, or a 5xx; asked once more", "err", logline.Quote(err.Error()))
+		logErrorAt(slog.LevelWarn, r, "account deletion: portal-api gave no answer, or a 5xx; asked once more", err)
 		err = ask()
 	}
 	return err
@@ -98,7 +98,7 @@ func deleteMe(st *store.Store, pc *portal.Client, token string) http.HandlerFunc
 		}
 		d, err := st.DeleteUserData(r.Context(), sub)
 		if err != nil {
-			slog.Error("account deletion: the data could not be deleted", "err", err)
+			logFailureAt(slog.LevelError, r, "the database", "the account's deletion", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "data_not_deleted",
 				"message": "Your data could not be deleted, so nothing was. Try again later."})
 			return
@@ -118,7 +118,7 @@ func deleteMe(st *store.Store, pc *portal.Client, token string) http.HandlerFunc
 		switch {
 		case err == nil || errors.Is(err, portal.ErrAccountGone):
 			if cerr := d.Commit(ctx); cerr != nil {
-				slog.Error("account deletion: the account is gone, its data could not be deleted", "err", cerr)
+				logErrorAt(slog.LevelError, r, "account deletion: the account is gone, its data could not be deleted", cerr)
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "data_not_deleted",
 					"message": "Your account is deleted; some of your data could not be. Sign in again and ask once more to remove it."})
 				return
@@ -135,7 +135,7 @@ func deleteMe(st *store.Store, pc *portal.Client, token string) http.HandlerFunc
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "refused", "message": refused.Message})
 		default:
 			_ = d.Rollback(ctx)
-			slog.Error("account deletion: portal-api did not delete the account", "err", err)
+			logErrorAt(slog.LevelError, r, "account deletion: portal-api did not delete the account", err)
 			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "account_not_deleted",
 				"message": "Your account could not be deleted right now, so nothing was. Try again later."})
 		}
@@ -175,7 +175,7 @@ func deleteAccountData(st *store.Store, admin adminAccess, token string) http.Ha
 			err = d.Commit(r.Context())
 		}
 		if err != nil {
-			slog.Error("account deletion: an account's data could not be deleted", "err", err)
+			logFailureAt(slog.LevelError, r, "the database", "an account's data, for portal-api", err)
 			http.Error(w, "the data could not be deleted", http.StatusInternalServerError)
 			return
 		}

@@ -25,7 +25,13 @@ info:
     upstream does not answer, 502 "playback unavailable" (chino-stream) or
     "artwork unavailable" (katalog-manager); its error answer keeps its
     status, with that line for 500 or more and the status's words below, as
-    plain text, and of its headers Retry-After and Content-Range alone; an
+    plain text, and of its headers Retry-After and Content-Range alone, in
+    their own syntax; its answer below 400 goes on with its body and the
+    headers a player needs (nosniff, and a type only as one the media routes
+    serve, any other or none as application/octet-stream); one it breaks off
+    is that 502 where none of it has gone out yet, and cut off for the caller
+    where bytes of it have; a redirect of an upstream is not followed, and
+    goes on as its status without its Location; an
     admin's packaging that katalog-manager does not answer, 502 "packaging
     unavailable"; a bug report OpenProject does not take, 502 "bug reports
     unavailable". A bearer that does not verify is 401 "invalid token", and
@@ -83,9 +89,11 @@ paths:
     get:
       summary: What a client needs to know of this server before it signs in
       description: >-
-        The same for every caller and holding nothing secret: it asks for no
-        bearer, any origin may read it (Access-Control-Allow-Origin: *), and
-        it may be cached for 5 minutes (Cache-Control: public, max-age=300).
+        Holding nothing secret: it asks for no bearer, any origin may read it
+        (Access-Control-Allow-Origin: *), and it may be cached for 5 minutes:
+        by any cache where PUBLIC_BASE_URL is set (Cache-Control: public,
+        max-age=300), else, apiBase being the request's own, by the caller's
+        alone (private, max-age=300).
         A client that knows only the server's address reads here the
         identity provider to sign in with, the public client id of its
         platform, and what the server offers (features).
@@ -1440,7 +1448,8 @@ paths:
       An admin's: the bearer must carry the admin role in its realm roles
       (realm_access.roles; zaentrum-admin unless ADMIN_ROLE names another).
       Both methods are forwarded to katalog-manager with the bearer, which
-      checks it again, and its answer comes back as it is. A stream token is
+      checks it again, and its answer comes back as it is, but for a
+      redirect's Location: a redirect is not followed. A stream token is
       not taken.
     parameters:
       - $ref: "#/components/parameters/ItemID"
@@ -1700,8 +1709,10 @@ components:
           type: string
           description: >-
             Where this server's API is reached, <origin>/api: PUBLIC_BASE_URL's
-            origin where it is set, else the request's (its X-Forwarded-Proto
-            behind a proxy)
+            origin where it is set, else the request's: its Host where that is
+            a host and a port of 1 to 65535, nothing more, and its
+            X-Forwarded-Proto behind a proxy where that is http or https;
+            "/api" for a Host of any other form
         oidcIssuer: { type: string, description: "The identity provider a client signs in with (OIDC_ISSUER)" }
         oidcAudience: { type: string, description: "The audience a bearer is checked for (OIDC_AUDIENCE)" }
         oidcEnabled:

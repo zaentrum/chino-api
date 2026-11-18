@@ -2,7 +2,6 @@ package http
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"time"
 
@@ -33,7 +32,7 @@ func fileOf(r *http.Request, st *store.Store, kc *katalog.Client, userID, id str
 	defer cancel()
 	ids, err := kc.FileEpisodes(ctx, bearerFrom(r), id)
 	if err != nil {
-		log.Printf("chino-api: the episodes of the file of %s could not be asked, it is written alone: %v", id, err)
+		logFailure(r, "katalog-api", "the episodes of the title's file, written for the title alone", err)
 		return []string{id}
 	}
 	return ids

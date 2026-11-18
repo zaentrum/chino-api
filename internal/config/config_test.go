@@ -45,3 +45,29 @@ func TestDownloadsEnabled(t *testing.T) {
 		}
 	}
 }
+
+// An upstream's base address goes without the slashes it ends in, so that a
+// route joined to it has one: katalog-api's, chino-stream's, the artwork's,
+// katalog-manager's under either name, portal-api's and OpenProject's.
+func TestUpstreamBaseAddressesLoseTheirTrailingSlashes(t *testing.T) {
+	for _, base := range []string{"http://up.example/", "http://up.example//", " http://up.example/ "} {
+		for _, key := range []string{"KATALOG_BASE_URL", "STREAM_BASE_URL", "ARTWORK_BASE_URL", "KATALOG_MANAGER_URL",
+			"PORTAL_BASE_URL", "OPENPROJECT_URL"} {
+			t.Setenv(key, base)
+		}
+		t.Setenv("ANALYZER_BASE_URL", "")
+		c := Load()
+		for key, got := range map[string]string{"KATALOG_BASE_URL": c.KatalogBaseURL, "STREAM_BASE_URL": c.StreamBaseURL,
+			"ARTWORK_BASE_URL": c.ArtworkBaseURL, "KATALOG_MANAGER_URL": c.KatalogManagerURL,
+			"PORTAL_BASE_URL": c.PortalBaseURL, "OPENPROJECT_URL": c.OpenProjectURL} {
+			if got != "http://up.example" {
+				t.Errorf("%s %q: %q, want http://up.example", key, base, got)
+			}
+		}
+	}
+	t.Setenv("KATALOG_MANAGER_URL", "")
+	t.Setenv("ANALYZER_BASE_URL", "http://up.example/km/")
+	if got := Load().KatalogManagerURL; got != "http://up.example/km" {
+		t.Errorf("ANALYZER_BASE_URL http://up.example/km/: %q, want http://up.example/km", got)
+	}
+}

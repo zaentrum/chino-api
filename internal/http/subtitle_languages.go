@@ -11,8 +11,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/zaentrum/chino-api/internal/redact"
 )
 
 // The instance's subtitle languages: the languages every title of it is to
@@ -70,8 +68,7 @@ func newSubtitleLanguages(base string) *subtitleLanguages {
 func (s *subtitleLanguages) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	langs, err := s.languages(r)
 	if err != nil {
-		slog.Warn("subtitle languages: katalog-manager did not answer, and there is no answer young enough to serve",
-			"err", redact.Text(err.Error()))
+		logFailureAt(slog.LevelWarn, r, "katalog-manager", "the subtitle languages, none kept young enough to serve", err)
 		http.Error(w, "subtitle languages unavailable", http.StatusBadGateway)
 		return
 	}
@@ -92,8 +89,7 @@ func (s *subtitleLanguages) languages(r *http.Request) ([]string, error) {
 		return langs, nil
 	}
 	if kept, age, ok := s.kept(s.stale); ok {
-		slog.Warn("subtitle languages: katalog-manager did not answer, the last answer is served",
-			"age", age.Round(time.Second).String(), "err", redact.Text(err.Error()))
+		logFailureAt(slog.LevelWarn, r, "katalog-manager", "the subtitle languages, the last answer served, "+age.Round(time.Second).String()+" old", err)
 		return kept, nil
 	}
 	return nil, err
@@ -141,7 +137,7 @@ func (s *subtitleLanguages) ask(r *http.Request) ([]string, error) {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := katalogManagerClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

@@ -108,8 +108,9 @@ type Config struct {
 
 	// PublicBaseURL, when set, is the canonical external origin of this
 	// chino-api (e.g. https://chino.example.com). GET /api/config reports
-	// "<PublicBaseURL>/api" as apiBase; when empty it derives the origin
-	// from the request (X-Forwarded-Proto + Host).
+	// "<PublicBaseURL>/api" as apiBase, cacheable by any cache; when empty
+	// it derives the origin from the request (X-Forwarded-Proto + Host, each
+	// in its own syntax), cacheable by the caller's cache alone.
 	PublicBaseURL string
 
 	// OpenProject wiring for POST /api/v1/feedback (bug-report pipeline).
@@ -153,11 +154,11 @@ func Load() Config {
 		OIDCIssuer:         envDefault("OIDC_ISSUER", "https://sso.example/realms/zaentrum"),
 		OIDCAudience:       envDefault("OIDC_AUDIENCE", "chino-web"),
 		OIDCEnabled:        envDefault("OIDC_ENABLED", "true") != "false",
-		KatalogBaseURL:     envDefault("KATALOG_BASE_URL", "http://katalog-api.stube.svc.cluster.local"),
-		StreamBaseURL:      envDefault("STREAM_BASE_URL", "http://chino-stream.stube.svc.cluster.local"),
-		ArtworkBaseURL:     envDefault("ARTWORK_BASE_URL", "http://katalog-manager-api.stube.svc.cluster.local"),
-		KatalogManagerURL:  envDefault("KATALOG_MANAGER_URL", envDefault("ANALYZER_BASE_URL", DefaultKatalogManagerURL)),
-		PortalBaseURL:      envDefault("PORTAL_BASE_URL", "http://portal-api"),
+		KatalogBaseURL:     envBase("KATALOG_BASE_URL", "http://katalog-api.stube.svc.cluster.local"),
+		StreamBaseURL:      envBase("STREAM_BASE_URL", "http://chino-stream.stube.svc.cluster.local"),
+		ArtworkBaseURL:     envBase("ARTWORK_BASE_URL", "http://katalog-manager-api.stube.svc.cluster.local"),
+		KatalogManagerURL:  envBase("KATALOG_MANAGER_URL", envBase("ANALYZER_BASE_URL", DefaultKatalogManagerURL)),
+		PortalBaseURL:      envBase("PORTAL_BASE_URL", "http://portal-api"),
 		AdminRole:          envDefault("ADMIN_ROLE", DefaultAdminRole),
 		AdminSubjects:      splitCSV(envDefault("ADMIN_SUBJECTS", "")),
 		PgURL:              envDefault("PG_URL", ""),
@@ -168,7 +169,7 @@ func Load() Config {
 		OIDCClientIDPortal: envDefault("OIDC_CLIENT_ID_PORTAL", "zaentrum-web"),
 		PublicBaseURL:      envDefault("PUBLIC_BASE_URL", ""),
 
-		OpenProjectURL:       envDefault("OPENPROJECT_URL", "https://openproject.example"),
+		OpenProjectURL:       envBase("OPENPROJECT_URL", "https://openproject.example"),
 		OpenProjectToken:     envDefault("OPENPROJECT_TOKEN", ""),
 		OpenProjectProjectID: envInt("OPENPROJECT_PROJECT_ID", 36),
 		OpenProjectBugTypeID: envInt("OPENPROJECT_BUG_TYPE_ID", 7),
@@ -182,6 +183,13 @@ func Load() Config {
 		AccountDeletionToken: envDefault("ACCOUNT_DELETION_TOKEN", ""),
 	}
 	return c
+}
+
+// envBase is envDefault for an upstream's base address, without the slashes
+// it ends in: the routes are joined to it each with a / of its own, and a
+// path that begins // is not the upstream's route.
+func envBase(key, def string) string {
+	return strings.TrimRight(envDefault(key, def), "/")
 }
 
 func envDefault(key, def string) string {
