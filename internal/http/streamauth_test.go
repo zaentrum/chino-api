@@ -177,3 +177,30 @@ func TestURLOnlyRoutesTakeTheStreamToken(t *testing.T) {
 		t.Errorf("GET /me with the deprecated ?token=: %d %s, want 200 for this release", w.Code, w.Body)
 	}
 }
+
+// The sign-in discovery runs on a context of its own: where the first caller
+// left before it ended, the next caller is verified. (internal/auth tests a
+// discovery the issuer fails, and its fetch of the keys.)
+func TestTheSignInDiscoveryIsAskedAgainWhereItFailed(t *testing.T) {
+	logged := logs(t)
+	is := newIssuer(t)
+	viewer := http.Header{"Authorization": {"Bearer " + is.token(t, "viewer-1", "chino")}}
+
+	h := oidcRouter(t, is)
+	h.ServeHTTP(httptest.NewRecorder(), gone(http.MethodGet, "/api/v1/me", viewer))
+	if w := do(h, http.MethodGet, "/api/v1/me", viewer); w.Code != http.StatusOK {
+		t.Errorf("after a first caller who left: %d %q, want 200", w.Code, w.Body)
+	}
+	if lines := logged.lines(); len(lines) != 0 {
+		t.Errorf("after a first caller who left: logged %q, want nothing", lines)
+	}
+	// Once the discovery is made, a caller who has left is verified too, as
+	// before: its request goes on to its route.
+	for i := 0; i < 20; i++ {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, gone(http.MethodGet, "/api/v1/me", viewer))
+		if w.Code != http.StatusOK {
+			t.Fatalf("a caller who left, once the discovery is made: %d %q, want 200", w.Code, w.Body)
+		}
+	}
+}

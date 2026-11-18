@@ -639,7 +639,13 @@ error's text.
 - A bearer that does not verify (expired, not signed by `OIDC_ISSUER`'s
   keys, malformed) is `401` `invalid token`, and one made for another
   audience than `OIDC_AUDIENCE` `401` `invalid token: wrong audience`, as
-  plain text. A write for an account whose deletion has begun is `401`
+  plain text. Where `OIDC_ISSUER` does not answer its sign-in discovery
+  (within 10 seconds) a bearer is `503` `oidc provider unavailable`. A
+  discovery that failed is not kept: a bearer a second after it has it
+  asked again, one in between is answered the failure at once, and the
+  failure is logged at most once a minute. A fetch of the issuer's keys
+  ends after 10 seconds too, and the next bearer has them asked for again.
+  A write for an account whose deletion has begun is `401`
   `{"error": "account_deleted", "detail": "…"}`, and one that waited for
   that deletion to end more than 3 seconds `503` `account busy`, as plain
   text, with `Retry-After: 5` ([Deleting an account](#deleting-an-account)).

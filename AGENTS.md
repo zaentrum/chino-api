@@ -39,7 +39,7 @@ throwaway PostgreSQL 16 for the tests that need one. The tests
 of what chino-api keeps (progress, watched, finished titles, Continue
 Watching, account deletion and the writes refused after it, a capped viewer's
 lists, the account's settings, a database error's answer, lists by kind: 35
-of the 186) need a
+of the 191) need a
 PostgreSQL in which they may create and drop schemas, named by
 `CHINO_API_TEST_DATABASE_URL`; each works in a schema of its own and drops it.
 Without it they are skipped, and where `CI` is set (GitHub's runners set it)
